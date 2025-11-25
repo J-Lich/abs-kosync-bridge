@@ -1,0 +1,8 @@
+requests
+schedule
+faster-whisper
+ebooklib
+beautifulsoup4
+rapidfuzz
+tqdm
+gTTs
