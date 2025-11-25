@@ -145,6 +145,10 @@ docker-compose logs -f abs-kosync
 - Processing: Shows download and transcription status.
 - Syncing: Shows exactly what text is being matched and the calculated XPath.
 
+## 🌟 Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=j-lich/abs-kosync-bridge&type=date&legend=top-left)](https://www.star-history.com/#j-lich/abs-kosync-bridge&type=date&legend=top-left)
+
 ## 🛠️ Troubleshooting
 
 - 404 Errors: Ensure KOSYNC_SERVER does not end with a slash /.
