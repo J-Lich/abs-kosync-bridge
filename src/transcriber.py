@@ -147,7 +147,7 @@ class AudioTranscriber:
                     # Check length and split if necessary before appending
                     final_parts = self.split_audio_file(local_path, MAX_DURATION_SECONDS)
                     
-                    downloaded_files.extend(local_path)
+                    downloaded_files.extend(final_parts)
                     
                 except Exception as e:
                     logger.error(f"❌ Failed to download Part {idx + 1}: {e}")
