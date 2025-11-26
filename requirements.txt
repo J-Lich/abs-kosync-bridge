@@ -4,5 +4,6 @@ faster-whisper
 ebooklib
 beautifulsoup4
 rapidfuzz
+fuzzysearch
 tqdm
 gTTs
