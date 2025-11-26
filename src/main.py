@@ -271,7 +271,7 @@ class SyncManager:
 
                 if updated_ok:
                     prev_state['last_updated'] = time.time()
-                     self.state[abs_id] = prev_state
+                    self.state[abs_id] = prev_state
                     self._save_state()
                     logger.info("   💾 State saved.")
                 else:
