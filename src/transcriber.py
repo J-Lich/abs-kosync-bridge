@@ -60,7 +60,7 @@ class AudioTranscriber:
                 logger.info(f"   Downloading Part {idx + 1}/{len(audio_urls)}...")
 
                 try:
-                    with requests.get(stream_url, stream=True, timeout=30) as r:
+                    with requests.get(stream_url, stream=True, timeout=120) as r:
                         r.raise_for_status()
                         with open(local_path, 'wb') as f:
                             for chunk in r.iter_content(chunk_size=8192):
