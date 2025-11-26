@@ -271,10 +271,16 @@ class SyncManager:
 
                 if updated_ok:
                     prev_state['last_updated'] = time.time()
-                    self.state[abs_id] = prev_state
+                     self.state[abs_id] = prev_state
                     self._save_state()
                     logger.info("   💾 State saved.")
-
+                else:
+                    prev_state['abs_ts'] = abs_progress
+                    prev_state['kosync_pct'] = kosync_progress
+                    prev_state['last_updated'] = time.time()
+                    self.state[abs_id] = prev_state
+                    self._save_state()
+                    logger.info("   🤷 State matched to avoid loop.")
             except Exception as e:
                 logger.error(f"Error syncing {abs_title}: {e}")
 
