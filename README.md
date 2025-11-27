@@ -67,6 +67,7 @@ services:
 
     environment:
       - TZ=America/New_York
+      - LOG_LEVEL=INFO
       # --- Server Connections ---
       - ABS_SERVER=http://audiobookshelf:80
       - ABS_KEY=your_abs_api_key_here
@@ -120,6 +121,7 @@ services:
 
     environment:
       - TZ=America/New_York
+      - LOG_LEVEL=INFO
       # --- Server Connections ---
       - ABS_SERVER=http://audiobookshelf:80
       - ABS_KEY=your_abs_api_key_here
@@ -168,6 +170,7 @@ services:
 
     environment:
       - TZ=America/New_York
+      - LOG_LEVEL=INFO
       # --- Server Connections ---
       - ABS_SERVER=http://audiobookshelf:80
       - ABS_KEY=your_abs_api_key_here
@@ -240,6 +243,7 @@ SYNC_DELTA_ABS_SECONDS | `60` | Ignore audiobook changes smaller than X seconds 
 SYNC_DELTA_KOSYNC_PERCENT | `1` | Ignore ebook changes smaller than X% (Loop prevention)
 FUZZY_MATCH_THRESHOLD | `80` | Confidence score (0-100) required for fuzzy matching
 KOSYNC_HASH_METHOD | `content` | content (Recommended/KOReader default) or filename (Legacy)
+LOG_LEVEL | INFO | Log level. DEBUG if raising an issue
 
 ## 📖 Usage Guide
 1. The Matching Wizard
