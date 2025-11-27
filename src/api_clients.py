@@ -105,7 +105,7 @@ class KoSyncClient:
     def __init__(self):
         self.base_url = os.environ.get("KOSYNC_SERVER", "").rstrip('/')
         self.user = os.environ.get("KOSYNC_USER")
-        self.auth_token = hashlib.md5(os.environ.get("KOSYNC_KEY", ""))
+        self.auth_token = hashlib.md5(os.environ.get("KOSYNC_KEY", "").encode('utf-8')).hexdigest()
 
     def check_connection(self):
         url = f"{self.base_url}/healthcheck"
