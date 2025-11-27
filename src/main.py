@@ -12,7 +12,7 @@ from api_clients import ABSClient, KoSyncClient
 from transcriber import AudioTranscriber
 from ebook_utils import EbookParser
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("/data")
@@ -246,6 +246,7 @@ class SyncManager:
                     target_text = self.transcriber.get_text_at_time(transcript_path, abs_progress)
                     if target_text:
                         logger.info(f"   🔍 Searching Ebook for text: '{target_text[:60]}...'")
+                        logger.debug(f"   🔍 Searching Ebook for text: '{target_text}'")
                         matched_pct, xpath = self.ebook_parser.find_text_location(ebook_filename, target_text)
                         if matched_pct is not None:
                             logger.info(f"   ✅ Match at {matched_pct:.2%}. Sending Update...")
