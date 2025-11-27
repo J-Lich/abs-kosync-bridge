@@ -225,9 +225,19 @@ class SyncManager:
 
             # Log ignored changes for debugging
             if abs_delta > 0 and not abs_changed:
-                logger.info(f"   ✋ Ignoring ABS delta {abs_delta:.2f}s (Below threshold {self.delta_abs_thresh}s)")
+                logger.info(f"   ✋ ABS delta {abs_delta:.2f}s (Below threshold {self.delta_abs_thresh}s): {abs_title}")
+                prev_state['abs_ts'] = abs_progress   
+                prev_state['last_updated'] = time.time()
+                self.state[abs_id] = prev_state
+                self._save_state()
+                logger.info("   🤷 State matched to avoid loop.")
             if kosync_delta > 0 and not kosync_changed:
-                logger.info(f"   ✋ Ignoring KoSync delta {kosync_delta:.4%} (Below threshold {self.delta_kosync_thresh:.2%})")
+                logger.info(f"   ✋ KoSync delta {kosync_delta:.4%} (Below threshold {self.delta_kosync_thresh:.2%}): {ebook_filename}")
+                prev_state['kosync_pct'] = kosync_progress
+                prev_state['last_updated'] = time.time()
+                self.state[abs_id] = prev_state
+                self._save_state()
+                logger.info("   🤷 State matched to avoid loop.")
 
             if not abs_changed and not kosync_changed: continue
 
