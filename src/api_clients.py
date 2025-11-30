@@ -70,7 +70,15 @@ class ABSClient:
                 for af in audio_files:
                     stream_url = f"{self.base_url}/api/items/{item_id}/file/{af['ino']}"
                     stream_url += f"?token={self.token}" 
-                    files.append({"stream_url": stream_url})
+                    
+                    extension = af.get('metadata', {}).get('ext') or 'mp3'
+                    if not extension.startswith('.'):
+                        extension = f"
+                    
+                    files.append({
+                        "stream_url": stream_url,
+                        "ext": extension
+                     })
                 return files
             else:
                 logger.error(f"Failed to get audio files for {item_id}: {r.status_code} - {r.text}")
