@@ -268,12 +268,13 @@ class SyncManager:
                     if target_text:
                         logger.info(f"   🔍 Searching Ebook for text: '{target_text[:60]}...'")
                         logger.debug(f"   🔍 Searching Ebook for text: '{target_text}'")
-                        matched_pct, xpath = self.ebook_parser.find_text_location(ebook_filename, target_text)
+                        matched_pct, xpath, matched_index = self.ebook_parser.find_text_location(ebook_filename, target_text)
                         if matched_pct is not None:
                             logger.info(f"   ✅ Match at {matched_pct:.2%}. Sending Update...")
                             self.kosync_client.update_progress(kosync_id, matched_pct, xpath)
                             prev_state['abs_ts'] = abs_progress
                             prev_state['kosync_pct'] = matched_pct
+                            prev_state['kosync_index'] = matched_index
                             updated_ok = True
                         else:
                             logger.error("   ❌ Ebook text match FAILED.")
