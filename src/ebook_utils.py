@@ -255,7 +255,7 @@ class EbookParser:
                         logger.info(f"   📍 Generated XPath: {xpath}")
                         break
                 
-                return percentage, xpath
+                return percentage, xpath, match_index
             
             return None, None
 
