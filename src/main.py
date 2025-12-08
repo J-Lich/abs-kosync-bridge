@@ -251,13 +251,23 @@ class SyncManager:
                 logger.info("   🤷 State matched to avoid loop.")
             if kosync_delta > 0 and not kosync_changed:
                 logger.info(f"   ✋ KoSync delta {kosync_delta:.4%} (Below threshold {self.delta_kosync_thresh:.2%}): {ebook_filename}")
-                prev_state['kosync_pct'] = kosync_progress
-                prev_state['last_updated'] = time.time()
-                ## change me
-                prev_state['kosync_index'] = 0
-                self.state[abs_id] = prev_state
-                self._save_state()
-                logger.info("   🤷 State matched to avoid loop.")
+                logger.debug(f"   🪲 Attempting to resolve character delta")
+                
+                index_delta = self.ebook_parser.get_character_delta(ebook_filename, prev_state['kosync_pct'], kosync_progress)
+                logger.debug(f"   🪲 KoSync character delta {index_delta}")
+
+                ## Hardcoded for testing! Adjust for new env variable.
+                if index_delta > 2000:
+                    kosync_changed = True
+                    logger.debug(f"   🪲 KoSync character delta larger than threshhold!")
+                else:  
+                    prev_state['kosync_pct'] = kosync_progress
+                    prev_state['last_updated'] = time.time()
+                    ## change me
+                    prev_state['kosync_index'] = 0
+                    self.state[abs_id] = prev_state
+                    self._save_state()
+                    logger.info("   🤷 State matched to avoid loop.")
 
             if not abs_changed and not kosync_changed: continue
 
