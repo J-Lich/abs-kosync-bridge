@@ -59,8 +59,11 @@ class SyncManager:
         self.delta_abs_thresh = float(os.getenv("SYNC_DELTA_ABS_SECONDS", 60))
         # KoSync: Percentage (Default 1%) -> Converted to 0.01
         self.delta_kosync_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_PERCENT", 1)) / 100.0
+        # Kosync: Character (Default 400 Words) -> Converted to characters by multiplying by 5
+        self.delta_kosync_char_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_CHARS", 400)) * 5
         
-        logger.info(f"⚙️  Sync Thresholds: ABS={self.delta_abs_thresh}s, KoSync={self.delta_kosync_thresh:.2%}")
+        
+        logger.info(f"⚙️  Sync Thresholds: ABS={self.delta_abs_thresh}s, KoSync={self.delta_kosync_thresh:.2%} ({self.delta_kosync_char_thresh} chars)")
         
         self.startup_checks()
         self.cleanup_stale_jobs()
@@ -264,16 +267,17 @@ class SyncManager:
                 logger.info("  🤷 State matched to avoid loop.")
             if kosync_delta > 0 and not kosync_changed:
                 logger.info(f"  ✋ KoSync delta {kosync_delta:.4%} (Below threshold {self.delta_kosync_thresh:.2%}): {ebook_filename}")
-                logger.debug(f"  🪲 Attempting to resolve character delta")
+                # logger.info(f"  🪲 Attempting to resolve character delta")
                 
                 index_delta = self.ebook_parser.get_character_delta(ebook_filename, prev_state['kosync_pct'], kosync_progress)
-                logger.debug(f"  🪲 KoSync character delta {index_delta}")
+                # logger.info(f"  🪲 KoSync character delta {index_delta}")
 
                 ## Hardcoded for testing! Adjust for new env variable.
-                if index_delta > 2000:
+                if index_delta > self.delta_kosync_char_thresh:
                     kosync_changed = True
-                    logger.debug(f"  🪲 KoSync character delta larger than threshhold!")
+                    logger.info(f"  🪲 KoSync character delta more than threshhold {index_delta}/{self.delta_kosync_char_thresh}")
                 else:  
+                    logger.info(f"  🪲 KoSync character delta less than threshhold {index_delta}/{self.delta_kosync_char_thresh}")
                     prev_state['kosync_pct'] = kosync_progress
                     prev_state['last_updated'] = time.time()
                     ## change me
