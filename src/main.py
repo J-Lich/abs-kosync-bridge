@@ -60,7 +60,7 @@ class SyncManager:
         # KoSync: Percentage (Default 1%) -> Converted to 0.01
         self.delta_kosync_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_PERCENT", 1)) / 100.0
         # Kosync: Character (Default 400 Words) -> Converted to characters by multiplying by 5
-        self.delta_kosync_char_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_CHARS", 400)) * 5
+        self.delta_kosync_char_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_WORDS", 400)) * 5
         
         
         logger.info(f"⚙️  Sync Thresholds: ABS={self.delta_abs_thresh}s, KoSync={self.delta_kosync_thresh:.2%} ({self.delta_kosync_char_thresh} chars)")
