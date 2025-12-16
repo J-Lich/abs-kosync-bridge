@@ -3,6 +3,8 @@ import requests
 import logging
 import time
 import hashlib
+import tempfile
+from email.message import EmailMessage
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +110,90 @@ class ABSClient:
             requests.patch(url, headers=self.headers, json=payload)
         except Exception as e:
             logger.error(f"  Failed to update ABS progress: {e}")
+
+    def get_all_ebooks(self):
+        """Fetches all items with mediaType=book"""
+        lib_url = f"{self.base_url}/api/libraries"
+        try:
+            r = requests.get(lib_url, headers=self.headers)
+            if r.status_code != 200: return []
+            
+            libraries = r.json().get('libraries', [])
+            all_ebooks = []
+
+            for lib in libraries:
+                items_url = f"{self.base_url}/api/libraries/{lib['id']}/items"
+                params = {"mediaType": "book"}
+                r_items = requests.get(items_url, headers=self.headers, params=params)
+                if r_items.status_code == 200:
+                    all_ebooks.extend(r_items.json().get('results', []))
+            return all_ebooks
+        except Exception as e:
+            logger.error(f"Error fetching ebooks: {e}")
+            return []
+
+    def get_ebook_progress(self, item_id):
+        """Gets percentage progress (0.0 - 1.0) for an ebook"""
+        url = f"{self.base_url}/api/me/progress/{item_id}"
+        try:
+            r = requests.get(url, headers=self.headers)
+            if r.status_code == 200:
+                # ABS returns 'progress' for ebooks (0.0 to 1.0) or 'ebookProgress'
+                data = r.json()
+                return data.get('progress', 0.0) 
+        except Exception:
+            pass
+        return 0.0
+
+    def update_ebook_progress(self, item_id, percentage):
+        """Updates ABS ebook progress"""
+        url = f"{self.base_url}/api/me/progress/{item_id}"
+        payload = {
+            "progress": percentage,
+            "isFinished": percentage >= 1.0
+        }
+        try:
+            requests.patch(url, headers=self.headers, json=payload)
+        except Exception as e:
+            logger.error(f"  Failed to update ABS ebook progress: {e}")
+
+    def compute_abs_hash(self, item_id):
+        """Downloads ebook to temp, computes KoSync hash, deletes temp."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            download_url = f"{self.base_url}/api/items/{item_id}/download"
+            try:
+                # 1. Download
+                with requests.get(download_url, headers=self.headers, stream=True) as r:
+                    r.raise_for_status()
+                    filename = "temp.epub"
+                    if "Content-Disposition" in r.headers:
+                        msg = EmailMessage()
+                        msg['content-disposition'] = r.headers['Content-Disposition']
+                        fname = msg.get_filename()
+                        if fname: filename = fname
+                    
+                    filepath = os.path.join(temp_dir, filename)
+                    with open(filepath, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                
+                # 2. Hash (KoReader logic)
+                md5 = hashlib.md5()
+                file_size = os.path.getsize(filepath)
+                with open(filepath, 'rb') as f:
+                    for i in range(-1, 11): 
+                        if i == -1: offset = 0
+                        else: offset = 1024 * (4 ** i)
+                        if offset >= file_size: break
+                        f.seek(offset)
+                        chunk = f.read(1024)
+                        if not chunk: break    
+                        md5.update(chunk)
+                return md5.hexdigest()
+
+            except Exception as e:
+                logger.error(f"Failed to hash ABS ebook {item_id}: {e}")
+                return None
 
 class KoSyncClient:
     def __init__(self):
