@@ -4,11 +4,10 @@
 <a href="https://buymeacoffee.com/jlich" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
 
 [![GitHub tag](https://img.shields.io/github/tag/j-lich/abs-kosync-bridge?include_prereleases=&sort=semver&color=blue)](https://github.com/j-lich/abs-kosync-bridge/releases/)
+![Docker Pulls](https://img.shields.io/docker/pulls/00jlich/abs-kosync-bridge)
+<br>
 [![issues - abs-kosync-bridge](https://img.shields.io/github/issues/j-lich/abs-kosync-bridge)](https://github.com/j-lich/abs-kosync-bridge/issues)
 [![issues-closed - abs-kosync-bridge](https://img.shields.io/github/issues-closed/j-lich/abs-kosync-bridge)](https://github.com/j-lich/abs-kosync-bridge/issues-closed)
-![Docker Pulls](https://img.shields.io/docker/pulls/00jlich/abs-kosync-bridge)
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/j-lich/abs-kosync-bridge/total)
-![Docker Stars](https://img.shields.io/docker/stars/00jlich/abs-kosync-bridge)
 
 </div>
 
