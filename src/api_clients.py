@@ -107,7 +107,7 @@ class ABSClient:
         try:
             requests.patch(url, headers=self.headers, json=payload)
         except Exception as e:
-            logger.error(f"  Failed to update ABS progress: {e}")
+            logger.error(f"Failed to update ABS progress: {e}")
 
 class KoSyncClient:
     def __init__(self):
@@ -168,9 +168,9 @@ class KoSyncClient:
             r = requests.put(url, headers=headers, json=payload)
             
             if r.status_code not in [200, 201]:
-                logger.error(f"  KoSync Update Failed: {r.status_code} - {r.text}")
+                logger.error(f"KoSync Update Failed: {r.status_code} - {r.text}")
             else:
-                logger.info(f"  KoSync updated successfully (HTTP {r.status_code})")
+                logger.info(f"KoSync updated successfully (HTTP {r.status_code})")
                 
         except Exception as e:
             logger.error(f"Failed to update KoSync: {e}")

@@ -8,3 +8,5 @@ fuzzysearch
 tqdm
 gTTs
 ffmpeg
+flask
+lxml

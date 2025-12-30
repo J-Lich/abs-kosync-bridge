@@ -84,6 +84,7 @@ class AudioTranscriber:
             # FFmpeg command to slice audio
             # -ss : Start time
             # -t  : Duration of the clip
+            # -map 0:a : Only copy audio streams (ignore cover art/metadata)
             # -c copy : Stream copy (FAST, no re-encoding, low RAM)
             # Note: If precise cutting is required and -c copy is inaccurate, 
             # remove '-c', 'copy' to re-encode (slower but precise).
@@ -92,6 +93,7 @@ class AudioTranscriber:
                 '-i', str(file_path),
                 '-ss', str(start_time),
                 '-t', str(segment_duration),
+                '-map', '0:a',  # Only select audio streams
                 '-c', 'copy',  
                 '-loglevel', 'error',
                 str(new_path)

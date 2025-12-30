@@ -1,33 +1,31 @@
+FROM 00jlich/abs-kosync-bridge:latest
 
-# Using Python 3.11 Slim (Debian) instead of Alpine
-# Alpine + PyTorch/NumPy (required for Whisper) is extremely unstable on ARM
-FROM python:3.11-slim-bookworm
+# Install additional Python dependencies
+RUN pip install --no-cache-dir flask lxml
 
-WORKDIR /app
+# Copy enhanced Python modules to src/ directory
+COPY main.py /app/src/main.py
+COPY storyteller_db.py /app/src/storyteller_db.py
+COPY transcriber.py /app/src/transcriber.py
+COPY ebook_utils.py /app/src/ebook_utils.py
+COPY api_clients.py /app/src/api_clients.py
 
-# Install system dependencies
-# ffmpeg is strictly required for audio processing
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# Copy web server to /app root
+COPY web_server.py /app/web_server.py
 
-# Copy requirements
-COPY requirements.txt .
+# Create templates directory and copy HTML templates
+RUN mkdir -p /app/templates
+COPY index.html /app/templates/index.html
+COPY match.html /app/templates/match.html
+COPY batch_match.html /app/templates/batch_match.html
+COPY book_linker.html /app/templates/book_linker.html
 
-# Install Python deps
-# Note: On ARM, this might take time to compile some wheels if pre-built ones aren't available
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy and set permissions for startup script
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
-# Copy source code
-COPY src/ ./src/
+# Expose web UI port
+EXPOSE 5757
 
-# Set environment variables
-ENV PYTHONPATH=/app/src
-ENV PYTHONUNBUFFERED=1
-
-# Create volume directories
-RUN mkdir -p /books /data
-
-# Default command runs the daemon
-CMD ["python", "src/main.py"]
+# Run startup script (starts both daemon and web server)
+CMD ["/app/start.sh"]

@@ -1,0 +1,111 @@
+﻿services:
+  abs-kosync-enhanced:
+    # Build from source (recommended)
+    build: .
+    
+    # Alternative: Use pre-built image (if published to Docker Hub)
+    # image: your-username/abs-kosync-enhanced:latest
+    
+    container_name: abs-kosync-enhanced
+    restart: unless-stopped
+    
+    environment:
+      # ============================================
+      # REQUIRED - Core Configuration
+      # ============================================
+      - TZ=America/New_York
+      - LOG_LEVEL=INFO
+      
+      # Audiobookshelf Configuration
+      - ABS_SERVER=https://your-audiobookshelf-server.com
+      - ABS_KEY=your_abs_api_key_here
+      - ABS_LIBRARY_ID=your_abs_library_id_here
+      
+      # KoSync Configuration
+      - KOSYNC_SERVER=https://your-calibre-server.com/api/koreader
+      - KOSYNC_USER=your_kosync_username
+      - KOSYNC_KEY=your_kosync_password
+      - KOSYNC_HASH_METHOD=content
+      
+      # Sync Behavior Settings
+      - SYNC_PERIOD_MINS=5
+      - SYNC_DELTA_ABS_SECONDS=60
+      - SYNC_DELTA_KOSYNC_PERCENT=1
+      - SYNC_DELTA_KOSYNC_WORDS=400
+      - FUZZY_MATCH_THRESHOLD=80
+      
+      # ============================================
+      # OPTIONAL - Storyteller Integration
+      # ============================================
+      - STORYTELLER_DB_PATH=/storyteller_data/storyteller.db
+      - STORYTELLER_USER_ID=your_storyteller_user_id_here
+      
+      # ============================================
+      # OPTIONAL - Book Linker
+      # ============================================
+      - MONITOR_INTERVAL=3600
+      # Optional: Override default paths if needed
+      - LINKER_BOOKS_DIR=/linker_books
+      - PROCESSING_DIR=/processing  
+      - STORYTELLER_INGEST_DIR=/storyteller/library
+      - AUDIOBOOKS_DIR=/audiobooks
+      
+      # ============================================
+      # OPTIONAL - ABS Collection Auto-Add
+      # ============================================
+      - ABS_COLLECTION_NAME=Synced with KOReader
+      
+      # ============================================
+      # OPTIONAL - Booklore Shelf Integration
+      # ============================================
+      - BOOKLORE_SERVER=https://your-calibre-server.com
+      - BOOKLORE_USER=your_booklore_username
+      - BOOKLORE_PASSWORD=your_booklore_password
+      - BOOKLORE_SHELF_NAME=Kobo
+    
+    volumes:
+      # ============================================
+      # REQUIRED VOLUMES
+      # ============================================
+      # App data (database, state, transcripts)
+      - ./data:/data
+      
+      # Ebook library for SYNC MATCHING (original functionality)
+      # This is where your main ebook collection lives
+      - /path/to/your/main/ebook/library:/books
+      
+      # ============================================
+      # OPTIONAL - Book Linker Volumes
+      # (Only needed if using the Book Linker feature)
+      # ============================================
+      
+      # Source ebooks for Book Linker Storyteller workflow
+      # Can be same as /books or a separate folder
+      - /path/to/ebooks/for/storyteller:/linker_books
+      
+      # Audiobook files (Book Linker copies these to processing)
+      - /path/to/audiobooks:/audiobooks
+      
+      # Storyteller temporary processing folder
+      # EPUB + audiobooks go here temporarily while Storyteller works
+      - /path/to/storyteller/processing:/processing
+      
+      # Storyteller final ingest folder (where readaloud EPUBs end up)
+      # If omitted, defaults to /linker_books
+      - /path/to/storyteller/library:/storyteller/library
+      
+      # ============================================
+      # OPTIONAL - Storyteller Database
+      # (Only needed if using Storyteller sync)
+      # ============================================
+      - /path/to/storyteller/data:/storyteller_data
+    
+    ports:
+      - 8080:5757  # Web UI port
+    
+    networks:
+      - your-network-name
+
+networks:
+  your-network-name:
+    external: true
