@@ -856,6 +856,7 @@ def match():
 
         add_to_abs_collection(manager.abs_client, abs_id)
         add_to_booklore_shelf(ebook_filename)
+        manager.storyteller_db.add_to_collection(ebook_filename)
 
         return redirect(url_for('index'))
 
@@ -967,6 +968,7 @@ def batch_match():
 
                 add_to_abs_collection(manager.abs_client, item['abs_id'])
                 add_to_booklore_shelf(item['ebook_filename'])
+                manager.storyteller_db.add_to_collection(item['ebook_filename'])
 
                 logger.info(f"MAPPED: ABS -> EPUB={ebook_path}")
 

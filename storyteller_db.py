@@ -264,3 +264,80 @@ class StorytellerDB:
             logger.error(f"Storyteller read error: {e}")
         
         return None, 0, None, None
+
+    def add_to_collection(self, ebook_filename, collection_name="ABS Synced"):
+        """
+        Add a book to a Storyteller collection.
+        Creates the collection if it doesn't exist.
+        
+        Args:
+            ebook_filename: The EPUB filename
+            collection_name: Collection name (default: "ABS Synced")
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.db_path.exists():
+            return False
+        
+        try:
+            import uuid as uuid_lib
+            
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Find the book
+                book_uuid, book_title = self._find_book_uuid(conn, ebook_filename)
+                if not book_uuid:
+                    logger.warning(f"Book not found in Storyteller: {ebook_filename}")
+                    return False
+                
+                # Find or create collection
+                cursor.execute(
+                    "SELECT uuid FROM collection WHERE name = ?",
+                    (collection_name,)
+                )
+                row = cursor.fetchone()
+                
+                if row:
+                    collection_uuid = row[0]
+                else:
+                    # Create collection
+                    collection_uuid = str(uuid_lib.uuid4())
+                    cursor.execute(
+                        """
+                        INSERT INTO collection (uuid, name, public, description)
+                        VALUES (?, ?, 1, '')
+                        """,
+                        (collection_uuid, collection_name)
+                    )
+                    logger.info(f"Created Storyteller collection: {collection_name}")
+                
+                # Check if already in collection
+                cursor.execute(
+                    """
+                    SELECT uuid FROM book_to_collection 
+                    WHERE collection_uuid = ? AND book_uuid = ?
+                    """,
+                    (collection_uuid, book_uuid)
+                )
+                if cursor.fetchone():
+                    logger.debug(f"Book already in collection: {book_title}")
+                    return True
+                
+                # Add to collection
+                link_uuid = str(uuid_lib.uuid4())
+                cursor.execute(
+                    """
+                    INSERT INTO book_to_collection (uuid, collection_uuid, book_uuid)
+                    VALUES (?, ?, ?)
+                    """,
+                    (link_uuid, collection_uuid, book_uuid)
+                )
+                
+                logger.info(f"✅ Added to Storyteller collection '{collection_name}': {book_title}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to add to Storyteller collection: {e}")
+            return False
