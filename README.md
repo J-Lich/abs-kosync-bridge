@@ -1,209 +1,309 @@
-# ABS-KOSync Bridge (Enhanced)
+# ABS-KoSync Enhanced
 
-Enhanced version of [abs-kosync-bridge](https://github.com/jLichti/abs-kosync-bridge) with three-way sync and Book Linker features.
+> Enhanced fork of [abs-kosync-bridge](https://github.com/00jlich/abs-kosync-bridge) with three-way sync, web UI, and automated workflows.
 
-[![Docker](https://img.shields.io/badge/docker-build-blue.svg)](https://github.com/cporcellijr/abs-kosync-bridge)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+## 🌟 Features
 
-## 🎯 What This Does
+### Core Sync Capabilities
+- **Three-way synchronization** between:
+  - 📱 Audiobookshelf (ABS) - audiobook progress
+  - 📖 KOReader/KOSync - ebook progress  
+  - 📚 Storyteller - enhanced reading app
+- **AI-powered transcription** for precise audio-to-text matching
+- **Smart progress tracking** with anti-regression safeguards
+- **Configurable sync thresholds** to prevent loops
 
-Seamlessly sync your reading progress between:
-- **Audiobookshelf** (audiobooks) ↔
-- **KOReader/KOSync** (ebooks on Kobo/Kindle) ↔
-- **Storyteller** (enhanced web reader)
+### Web Management Interface
+- 🎨 **Modern web UI** for easy management
+- 📋 **Batch matching queue** for multiple books
+- 🔗 **Book Linker workflow** for Storyteller integration
+- 📊 **Real-time progress monitoring** across all platforms
+- 🎯 **Single & bulk matching** interfaces
 
-Start listening in your car, continue reading on your Kobo, pick up on Storyteller - your progress stays in sync!
+### Automation Features
+- ⚙️ **Automated file monitoring** for Storyteller workflows
+- 📦 **Auto-organization** into ABS collections
+- 🏷️ **Booklore shelf integration** (optional)
+- 🔄 **Background sync daemon** with configurable intervals
 
-## ✨ New Features in This Fork
+---
 
-### Three-Way Sync
-- **Storyteller Integration:** Full three-way progress sync
-- **Anti-Regression:** Prevents accidental backwards sync
-- **Conflict Resolution:** Smart handling when multiple sources change
-- **Configurable Thresholds:** Fine-tune sync sensitivity
+## 🚀 Quick Start
 
-### Book Linker Workflow
-- **Automated Processing:** Prepare books for Storyteller with one click
-- **Smart Monitoring:** Detects completed processing and cleans up automatically
-- **Safety Checks:** Prevents interference with active processing
-- **Folder Preservation:** Maintains organized library structure
+### Prerequisites
+- Docker & Docker Compose
+- Audiobookshelf server (required)
+- KOSync/Calibre server (required)
+- Storyteller app (optional)
 
-### Web Interface
-- **Flask UI:** Manage all mappings through web interface
-- **Real-Time Progress:** See sync status across all three systems
-- **Batch Operations:** Match multiple books at once
-- **Search-on-Demand:** Fast page loads, only fetches data when needed
+### Basic Setup
 
-### Enhanced Management
-- **Complete Cleanup:** Delete removes mappings, state, and transcripts
-- **Collection Auto-Add:** Automatically adds books to ABS collections
-- **Booklore Integration:** Optional shelf management
-- **Flexible Configuration:** Environment variable-based setup
-
-## 📸 Screenshots
-   
-   ### Main Dashboard - Three-Way Progress Sync
-  <img width="1451" height="651" alt="image" src="https://github.com/user-attachments/assets/7480abb9-2800-483c-905c-33293e8a560b" />
-
-   
-   ### Book Linker Workflow
-<img width="1451" height="712" alt="image" src="https://github.com/user-attachments/assets/144386b3-3a05-4dc6-aea5-84b77176d13f" />
-
- 
-   ### Book Match
-<img width="1270" height="675" alt="image" src="https://github.com/user-attachments/assets/7d74d7f7-be10-4ed1-86a7-716c1092ca07" />
-
-<img width="1670" height="705" alt="image" src="https://github.com/user-attachments/assets/7d81f081-afc4-4418-bcea-ec15a99d36ae" />
-
-   
-## 📦 Quick Start
-
-### 1. Clone the Repository
+1. **Create your directory structure:**
 ```bash
-git clone https://github.com/cporcellijr/abs-kosync-bridge.git
-cd abs-kosync-bridge
+mkdir abs-kosync-enhanced
+cd abs-kosync-enhanced
 ```
 
-### 2. Configure
+2. **Download the example compose file:**
 ```bash
-cp docker-compose.example.yml docker-compose.yml
-nano docker-compose.yml  # Edit with your settings
+# Copy docker-compose.example.yml to docker-compose.yml
+# Edit with your server details
 ```
 
-### 3. Run
+3. **Configure your environment variables:**
+Edit `docker-compose.yml` with your server URLs, API keys, and paths.
+
+4. **Start the container:**
 ```bash
 docker compose up -d
 ```
 
-### 4. Access Web UI
-Open http://localhost:8080
+5. **Access the web interface:**
+Open `http://localhost:8080` in your browser
 
-## 📖 Full Documentation
+---
 
-- **[Quick Start Guide](QUICKSTART.md)** - Get running in 10 minutes
-- **[Configuration Reference](docker-compose.example.yml)** - All environment variables explained
-- **[Changelog](CHANGELOG.md)** - What's new in this version
+## ⚙️ Configuration
 
-## 🔧 Configuration
+### Required Environment Variables
 
-### Required Settings
 ```yaml
-environment:
-  # Audiobookshelf
-  - ABS_SERVER=https://your-abs-server.com
-  - ABS_KEY=your_api_key
-  
-  # KOSync
-  - KOSYNC_SERVER=https://your-server.com/api/koreader
-  - KOSYNC_USER=username
-  - KOSYNC_KEY=password
+# Audiobookshelf Configuration
+ABS_SERVER=https://your-audiobookshelf-server.com
+ABS_KEY=your_abs_api_key
+ABS_LIBRARY_ID=your_library_id
+
+# KoSync Configuration  
+KOSYNC_SERVER=https://your-calibre-server.com/api/koreader
+KOSYNC_USER=your_username
+KOSYNC_KEY=your_password
+KOSYNC_HASH_METHOD=content
 ```
 
 ### Optional Features
+
+#### Storyteller Integration
 ```yaml
-  # Storyteller (three-way sync)
-  - STORYTELLER_DB_PATH=/storyteller_data/storyteller.db
-  - STORYTELLER_USER_ID=your_user_id
-  
-  # Book Linker (automated workflow)
-  - MONITOR_INTERVAL=3600
-  - STORYTELLER_INGEST_DIR=/path/to/library
-  
-  # Integrations
-  - ABS_COLLECTION_NAME=Synced with KOReader
-  - BOOKLORE_SHELF_NAME=Kobo
+STORYTELLER_DB_PATH=/storyteller_data/storyteller.db
+STORYTELLER_USER_ID=your_user_id_here
 ```
 
-## 🎯 Use Cases
+#### Book Linker Workflow
+```yaml
+MONITOR_INTERVAL=3600  # Check for readaloud files every hour
+LINKER_BOOKS_DIR=/linker_books
+PROCESSING_DIR=/processing
+STORYTELLER_INGEST_DIR=/storyteller_ingest
+AUDIOBOOKS_DIR=/audiobooks
+```
 
-### Original Two-Way Sync (ABS ↔ KOSync)
-Perfect if you:
-- Listen to audiobooks in Audiobookshelf
-- Read ebooks on Kobo or Kindle with KOReader
-- Want progress to sync between audio and ebook versions
+#### ABS Collection Auto-Add
+```yaml
+ABS_COLLECTION_NAME=Synced with KOReader
+```
 
-### Enhanced Three-Way Sync (+ Storyteller)
-Perfect if you:
-- Also use Storyteller for enhanced web reading
-- Want seamless switching between listening, e-reader, and web
-- Need progress sync across all three platforms
+#### Booklore Integration
+```yaml
+BOOKLORE_SERVER=https://your-calibre-server.com
+BOOKLORE_USER=your_username
+BOOKLORE_PASSWORD=your_password
+BOOKLORE_SHELF_NAME=Kobo
+```
+
+#### Sync Behavior Tuning
+```yaml
+SYNC_PERIOD_MINS=5              # How often to check for changes
+SYNC_DELTA_ABS_SECONDS=60       # Min seconds change to trigger sync
+SYNC_DELTA_KOSYNC_PERCENT=1     # Min percentage change to trigger sync
+SYNC_DELTA_KOSYNC_WORDS=400     # Min word count change to trigger sync
+FUZZY_MATCH_THRESHOLD=80        # Text matching accuracy (0-100)
+```
+
+---
+
+## 📁 Volume Mounts
+
+### Required Volumes
+
+```yaml
+volumes:
+  # App data (database, transcripts, state)
+  - ./data:/data
+  
+  # Your main ebook library (for sync matching)
+  - /path/to/ebooks:/books
+```
+
+### Optional Volumes (Book Linker)
+
+```yaml
+volumes:
+  # Source ebooks for Storyteller workflow
+  - /path/to/source/ebooks:/linker_books
+  
+  # Audiobook files
+  - /path/to/audiobooks:/audiobooks
+  
+  # Storyteller processing folder
+  - /path/to/storyteller/temp:/processing
+  
+  # Storyteller library (final destination)
+  - /path/to/storyteller/library:/storyteller_ingest
+```
+
+### Optional Volumes (Storyteller)
+
+```yaml
+volumes:
+  # Storyteller database
+  - /path/to/storyteller/data:/storyteller_data
+```
+
+---
+
+## 📖 Usage Guide
+
+### Creating Book Mappings
+
+#### Option 1: Single Match
+1. Click **"Single Match"** in the web UI
+2. Select an audiobook from your ABS library
+3. Select the matching ebook
+4. Click **"Create Mapping"**
+
+#### Option 2: Batch Match
+1. Click **"Batch Match"**
+2. Add multiple audiobook/ebook pairs to the queue
+3. Click **"Process All"** when ready
 
 ### Book Linker Workflow
-Perfect if you:
-- Use Storyteller's readaloud feature
-- Want automated processing of ebook + audiobook pairs
-- Need organized management of processed books
 
-## 🔄 How It Works
+1. Click **"Book Linker"**
+2. Search for a book title
+3. Select ebooks and audiobooks
+4. Click **"Process Selected"**
+5. Files are copied to Storyteller's processing folder
+6. After Storyteller processes them, the monitor automatically:
+   - Moves readaloud files to ingest folder
+   - Cleans up temporary files
 
-### Sync Flow
+### Monitoring Sync Status
+
+The main dashboard shows:
+- 🎧 Current audiobook progress (time)
+- 📖 Current ebook progress (percentage)
+- 📚 Current Storyteller progress (percentage)
+- 🔄 Last sync time
+- 📊 Unified progress bar (furthest position)
+
+---
+
+## 🔧 Troubleshooting
+
+### Sync Not Working
+
+1. **Check connectivity:**
+   - View container logs: `docker compose logs -f`
+   - Look for connection errors on startup
+
+2. **Verify API keys:**
+   - Test ABS connection: Check if cover images load
+   - Test KOSync: Try manual sync in KOReader
+
+3. **Check file permissions:**
+   - Ensure container can read ebook folders
+   - Verify write access to `/data` volume
+
+### Book Linker Issues
+
+1. **Files not being processed:**
+   - Check monitor interval (default 1 hour)
+   - Manually trigger: Click "Check Now" in Book Linker
+
+2. **Storyteller not finding files:**
+   - Verify folder paths in Storyteller settings
+   - Check volume mounts match Storyteller's expectations
+
+### Progress Regression
+
+The system includes anti-regression protection. If you intentionally restart a book:
+1. Manually reset progress in all systems (ABS, KOReader, Storyteller)
+2. Or delete and recreate the mapping
+
+---
+
+## 🏗️ Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/abs-kosync-enhanced.git
+cd abs-kosync-enhanced
+
+# Build the Docker image
+docker build -t abs-kosync-enhanced:latest .
+
+# Run with docker compose
+docker compose up -d
 ```
-ABS Progress Changed → Transcribe audio → Find matching text in ebook → Update KOSync & Storyteller
-KOSync Changed → Find text in ebook → Find matching audio → Update ABS & Storyteller  
-Storyteller Changed → Find text in ebook → Find matching audio → Update ABS & KOSync
-```
 
-### Book Linker Flow
-```
-Select ebook + audiobook → Copy to processing folder → Storyteller processes →
-Monitor detects completion → Move to library → Clean up originals
-```
-
-
-## ⚠️ Known Limitations
-
-### Storyteller: Book Must Be Opened First
-
-**Important:** For Storyteller sync to work, you must open each book in Storyteller at least once before syncing will function.
-
-**Why?** The sync system updates existing position entries in Storyteller's database. Storyteller only creates a position entry when you first open a book in its UI. Without this initial entry, there's nothing for the sync to update.
-
-**Workaround:**
-1. After processing a book with Book Linker (or manually adding it to Storyteller)
-2. Open the book once in Storyteller's web interface
-3. You can close it immediately - this creates the required database entry
-4. Sync will now work for that book
-
-**Affected scenarios:**
-- New books processed via Book Linker
-- Books added directly to Storyteller's library folder
-- Any book not yet opened in Storyteller's UI
-
-*Future versions may add automatic position entry creation to eliminate this requirement.*
-
-### Other Limitations
-
-- **Transcription RAM:** Long audiobooks (3+ hours per file) may require significant RAM during initial transcription. Files are automatically split into 45-minute chunks to mitigate this.
-- **Fuzzy Matching:** Text matching between audio transcripts and ebooks works best with professionally narrated audiobooks that closely follow the text.
-- **KOReader Hash Method:** Ensure your `KOSYNC_HASH_METHOD` matches your KOReader settings (usually `content`).
+---
 
 ## 🙏 Credits
 
-This is an enhanced fork of [abs-kosync-bridge](https://github.com/jLichti/abs-kosync-bridge) by [jLichti](https://github.com/jLichti).
+This project is an enhanced fork of [abs-kosync-bridge](https://github.com/00jlich/abs-kosync-bridge) by 00jlich.
 
-**Original features:**
-- Two-way sync between Audiobookshelf and KOSync
-- Audio transcription with Whisper AI
-- Fuzzy text matching
+**Enhancements include:**
+- Three-way sync with Storyteller
+- Web management interface
+- Book Linker automation workflow
+- Batch matching capabilities
+- Enhanced progress tracking
+- Collection/shelf auto-organization
 
-**Enhancements by [cporcellijr](https://github.com/cporcellijr):**
-- Storyteller DB integration for three-way sync
-- Book Linker workflow automation
-- Flask web interface
-- Batch operations and enhanced UX
+---
 
-## 📝 License
+## 📄 License
 
-MIT License - See [LICENSE](LICENSE) file
+[Same license as original project]
+
+---
 
 ## 🐛 Issues & Contributions
 
-Found a bug? Have a feature request?
-- Open an issue on [GitHub Issues](https://github.com/cporcellijr/abs-kosync-bridge/issues)
-- Check the original repo for upstream issues: [jLichti/abs-kosync-bridge](https://github.com/jLichti/abs-kosync-bridge)
+Found a bug? Have a feature request? 
 
-## 🔗 Related Projects
+Please open an issue on GitHub with:
+- Your docker-compose.yml (remove sensitive info)
+- Container logs (`docker compose logs`)
+- Steps to reproduce the issue
 
-- [Audiobookshelf](https://github.com/advplyr/audiobookshelf) - Self-hosted audiobook server
-- [KOReader](https://github.com/koreader/koreader) - Ebook reader for E Ink devices
-- [Storyteller](https://github.com/smoores-dev/storyteller) - Enhanced web-based ebook reader
+---
+
+## 🔮 Roadmap
+
+- [ ] Auto-detection of new audiobook activity
+- [ ] Suggested book matching
+- [ ] OPDS server support for ebook browsing
+- [ ] Multi-user support
+- [ ] Mobile-friendly UI
+- [ ] Progress export/import
+
+---
+
+## ℹ️ FAQ
+
+**Q: Can I use this without Storyteller?**  
+A: Yes! Just don't configure Storyteller environment variables. The core ABS ↔ KOSync sync works independently.
+
+**Q: Does this work with any KOSync server?**  
+A: Yes, any KOSync-compatible server works (Calibre with KOSync plugin, dedicated KOSync servers, etc.)
+
+**Q: Can I use the same ebook folder for both /books and /linker_books?**  
+A: Yes, they can be the same folder. One is for matching, one is for the Linker workflow.
+
+**Q: How much disk space do I need?**  
+A: Transcripts can be large (several MB per audiobook). Budget at least 100MB per mapped audiobook for transcripts and cache.
+
+**Q: Can I run multiple instances?**  
+A: Not recommended. Multiple instances would conflict over progress updates. Use one instance per user.
+

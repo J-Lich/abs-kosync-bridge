@@ -1,343 +1,299 @@
-"""
-Storyteller DB Integration for abs-kosync-bridge
-
-HARDENED VERSION with:
-- SQLite WAL mode for better concurrent access
-- Smart leapfrog: max(now, storyteller_ts) + 1 second
-- Session timestamp coordination
-"""
-
+# [START FILE: abs-kosync-enhanced/storyteller_db.py]
 import sqlite3
-import logging
 import os
-import json
+import logging
 import time
+import json
 from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-
 class StorytellerDB:
-    """
-    Storyteller SQLite database integration.
-    
-    SCHEMA:
-    - book: uuid, title
-    - position: uuid, book_uuid, user_id, locator (JSON), timestamp (ms), updated_at
-    - session: user_id, updated_at
-    
-    LEAPFROG STRATEGY:
-    Mobile apps cache reading positions and may push stale data.
-    We set timestamp to max(now, current_ts) + 1 second to always win.
-    """
-    
-    def __init__(self, db_path=None):
-        if db_path is None:
-            db_path = os.getenv("STORYTELLER_DB_PATH", "/data/storyteller.db")
-        self.db_path = Path(db_path)
-        self.user_id = os.getenv("STORYTELLER_USER_ID")
-        self.min_leapfrog_ms = int(os.getenv("STORYTELLER_LEAPFROG_MS", 1000))
-        
-        # Enable WAL mode on init
-        self._enable_wal_mode()
-        
-        logger.info(f"StorytellerDB: {self.db_path} (WAL mode, leapfrog={self.min_leapfrog_ms}ms)")
+    def __init__(self):
+        self.db_path = Path(os.environ.get("STORYTELLER_DB_PATH", "/storyteller_data/storyteller.db"))
+        self.conn = None
+        self._init_connection()
 
-    def _enable_wal_mode(self):
-        """Enable SQLite WAL mode for better concurrent access."""
+    def _init_connection(self):
         if not self.db_path.exists():
-            logger.warning(f"Storyteller DB not found: {self.db_path}")
-            return
+            logger.warning(f"Storyteller DB not found at {self.db_path}")
+            return False
         
         try:
-            conn = sqlite3.connect(str(self.db_path), timeout=15.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-            conn.close()
-            logger.debug(f"SQLite mode: {mode}")
+            # FIXED: Opened in Read-Write mode (removed mode=ro)
+            # check_same_thread=False allows this connection to be used by the daemon loop
+            self.conn = sqlite3.connect(f"file:{self.db_path}", uri=True, check_same_thread=False)
+            self.conn.row_factory = sqlite3.Row
+            
+            # Enable WAL mode for better concurrency
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            
+            logger.info(f"StorytellerDB: {self.db_path} (WAL mode, leapfrog=10000ms)")
+            return True
         except Exception as e:
-            logger.warning(f"Could not enable WAL mode: {e}")
-
-    @contextmanager
-    def _get_connection(self):
-        """Get DB connection with WAL mode and timeout."""
-        conn = sqlite3.connect(str(self.db_path), timeout=15.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+            logger.error(f"Failed to connect to Storyteller DB: {e}")
+            return False
 
     def check_connection(self):
-        """Test database connectivity."""
-        if not self.db_path.exists():
-            logger.error(f"❌ Storyteller DB not found: {self.db_path}")
-            return False
-        
+        if not self.conn:
+            return self._init_connection()
         try:
-            with self._get_connection() as conn:
+            cur = self.conn.cursor()
+            cur.execute("SELECT count(*) FROM book")
+            count = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM position")
+            pos_count = cur.fetchone()[0]
+            mode = cur.execute("PRAGMA journal_mode").fetchone()[0]
+            logger.info(f"✅ Storyteller DB: {count} books, {pos_count} positions (mode={mode})")
+            return True
+        except Exception as e:
+            logger.error(f"Storyteller Check Failed: {e}")
+            return False
+
+    def get_progress(self, ebook_filename):
+        if not self.conn: return None, None
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT uuid FROM book WHERE title LIKE ?", (f"%{Path(ebook_filename).stem}%",))
+            row = cursor.fetchone()
+            if not row: return None, None
+            book_uuid = row['uuid']
+            cursor.execute("""
+                SELECT locator, timestamp FROM position 
+                WHERE book_uuid = ? ORDER BY timestamp DESC LIMIT 1
+            """, (book_uuid,))
+            pos_row = cursor.fetchone()
+            if pos_row and pos_row['locator']:
+                data = json.loads(pos_row['locator'])
+                pct = data.get('locations', {}).get('totalProgression', 0)
+                ts = pos_row['timestamp']
+                return float(pct), ts
+            return None, None
+        except Exception as e:
+            logger.error(f"Storyteller Fetch Error: {e}")
+            return None, None
+
+    def get_progress_with_fragment(self, ebook_filename):
+        if not self.conn: return None, None, None, None
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT uuid FROM book WHERE title LIKE ?", (f"%{Path(ebook_filename).stem}%",))
+            row = cursor.fetchone()
+            if not row: return None, None, None, None
+            book_uuid = row['uuid']
+            cursor.execute("""
+                SELECT locator, timestamp FROM position 
+                WHERE book_uuid = ? ORDER BY timestamp DESC LIMIT 1
+            """, (book_uuid,))
+            pos_row = cursor.fetchone()
+            if pos_row and pos_row['locator']:
+                data = json.loads(pos_row['locator'])
+                pct = data.get('locations', {}).get('totalProgression', 0)
+                href = data.get('href', '')
+                frag_id = None
+                if '#' in href:
+                    href_parts = href.split('#')
+                    href = href_parts[0]
+                    frag_id = href_parts[1]
+                return float(pct), pos_row['timestamp'], href, frag_id
+            return None, None, None, None
+        except Exception as e:
+            logger.error(f"Storyteller Fragment Fetch Error: {e}")
+            return None, None, None, None
+
+
+    def update_progress(self, ebook_filename, percentage):
+        """
+        Update reading progress with aggressive timestamp leapfrog.
+        
+        Storyteller uses timestamp-based conflict resolution. The app caches positions
+        and syncs them back, potentially overwriting our DB changes. To win the race:
+        1. Use a timestamp far enough in the future to beat cached app positions
+        2. Clear specific anchors (cssSelector, fragments) that override totalProgression
+        3. Keep href/type so Storyteller knows which chapter we're in
+        """
+        try:
+            with sqlite3.connect(f"file:{self.db_path}", uri=True, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-                mode = cursor.execute("PRAGMA journal_mode").fetchone()[0]
-                pos_count = cursor.execute("SELECT COUNT(*) FROM position").fetchone()[0]
-                book_count = cursor.execute("SELECT COUNT(*) FROM book").fetchone()[0]
-                logger.info(f"✅ Storyteller DB: {book_count} books, {pos_count} positions (mode={mode})")
-                return True
-        except Exception as e:
-            logger.error(f"❌ Storyteller DB error: {e}")
-            return False
-
-    def _compute_leapfrog_timestamp(self, current_ts_ms):
-        """
-        Compute timestamp that beats Storyteller's current value.
-        
-        Formula: max(now, current_ts) + leapfrog_ms
-        
-        This ensures our update always wins over cached values.
-        """
-        now_ms = time.time() * 1000
-        base_ts = max(now_ms, current_ts_ms or 0)
-        leapfrog_ts = base_ts + self.min_leapfrog_ms
-        
-        # Convert to string format for updated_at field
-        leapfrog_dt = datetime.fromtimestamp(leapfrog_ts / 1000, tz=timezone.utc)
-        updated_at_str = leapfrog_dt.strftime('%Y-%m-%d %H:%M:%S')
-        
-        return leapfrog_ts, updated_at_str
-
-    def _find_book_uuid(self, conn, ebook_filename):
-        """Find book UUID by matching filename to title."""
-        cursor = conn.cursor()
-        cursor.execute("SELECT uuid, title FROM book")
-        results = cursor.fetchall()
-        
-        # Clean filename for matching
-        clean_filename = Path(ebook_filename).stem.lower()
-        clean_filename = clean_filename.replace("(readaloud)", "").strip()
-        
-        for row in results:
-            book_title = row['title'].lower()
-            if book_title in clean_filename or clean_filename in book_title:
-                return row['uuid'], row['title']
-        
-        return None, None
-
-    def _update_session(self, conn, user_id, updated_at_str):
-        """Update session timestamp to match position update."""
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE session SET updated_at = ? WHERE user_id = ?",
-                (updated_at_str, user_id)
-            )
-            logger.debug(f"Updated {cursor.rowcount} session(s)")
-        except Exception as e:
-            logger.warning(f"Session update failed: {e}")
-
-    def update_progress(self, ebook_filename, percentage, source_timestamp=None):
-        """
-        Update reading progress with smart leapfrog timestamp.
-        
-        Args:
-            ebook_filename: The EPUB filename
-            percentage: Progress as decimal (0.0 to 1.0)
-            source_timestamp: Ignored, kept for API compatibility
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.db_path.exists():
-            return False
-        
-        try:
-            with self._get_connection() as conn:
-                book_uuid, book_title = self._find_book_uuid(conn, ebook_filename)
-                if not book_uuid:
-                    logger.warning(f"Book not found in Storyteller: {ebook_filename}")
+                
+                cursor.execute("SELECT uuid FROM book WHERE title LIKE ?", (f"%{Path(ebook_filename).stem}%",))
+                row = cursor.fetchone()
+                if not row: return False
+                book_uuid = row['uuid']
+                
+                cursor.execute("""
+                    SELECT uuid, locator, timestamp FROM position 
+                    WHERE book_uuid = ? ORDER BY timestamp DESC LIMIT 1
+                """, (book_uuid,))
+                pos_row = cursor.fetchone()
+                
+                if not pos_row:
+                    logger.warning(f"No existing position for {ebook_filename}, skipping update")
                     return False
                 
-                cursor = conn.cursor()
+                current_ts = pos_row['timestamp'] if pos_row else 0
+                now_ms = int(time.time() * 1000)
+                
+                # AGGRESSIVE LEAPFROG: Jump 10 seconds ahead of both current time AND existing timestamp
+                # This ensures we beat any cached position the Storyteller app might sync back
+                new_ts = max(now_ms, current_ts) + 10000  # 10 second leap
+                
+                locator = {}
+                if pos_row['locator']:
+                    try: locator = json.loads(pos_row['locator'])
+                    except: pass
+                
+                if 'locations' not in locator: locator['locations'] = {}
+                
+                old_pct = locator.get('locations', {}).get('totalProgression', 0)
+                
+                # Skip if percentage hasn't changed meaningfully (avoid unnecessary writes)
+                if abs(float(percentage) - old_pct) < 0.001:
+                    return True
+                
+                # Update the percentage
+                locator['locations']['totalProgression'] = float(percentage)
+                
+                # CRITICAL: Remove specific anchors that override totalProgression
+                # Storyteller prioritizes cssSelector/fragments over totalProgression
+                # for positioning. By removing them, we force it to use our percentage.
+                for key in ['cssSelector', 'fragments', 'position', 'progression']:
+                    if key in locator['locations']:
+                        del locator['locations'][key]
+                
+                # Keep href and type - these tell Storyteller which chapter file,
+                # and it will calculate the specific position from totalProgression
+                
                 cursor.execute(
-                    "SELECT uuid, user_id, locator, timestamp FROM position WHERE book_uuid = ?",
-                    (book_uuid,)
+                    "UPDATE position SET locator = ?, timestamp = ? WHERE uuid = ?",
+                    (json.dumps(locator), new_ts, pos_row['uuid'])
                 )
-                rows = cursor.fetchall()
-                
-                if not rows:
-                    logger.warning(f"No position entries for: {book_title}")
-                    return False
-                
-                updated_count = 0
-                for row in rows:
-                    pos_uuid = row['uuid']
-                    user_id = row['user_id']
-                    current_ts = float(row['timestamp']) if row['timestamp'] else 0
-                    
-                    # Compute leapfrog timestamp
-                    new_ts, updated_at_str = self._compute_leapfrog_timestamp(current_ts)
-                    
-                    # Parse and update locator JSON
-                    try:
-                        locator = json.loads(row['locator']) if row['locator'] else {}
-                    except json.JSONDecodeError:
-                        locator = {}
-                    
-                    if 'locations' not in locator:
-                        locator['locations'] = {}
-                    locator['locations']['totalProgression'] = float(percentage)
-                    
-                    # Update position
-                    cursor.execute(
-                        "UPDATE position SET locator = ?, timestamp = ?, updated_at = ? WHERE uuid = ?",
-                        (json.dumps(locator), new_ts, updated_at_str, pos_uuid)
-                    )
-                    
-                    # Update session
-                    self._update_session(conn, user_id, updated_at_str)
-                    updated_count += 1
-                
-                delta_s = (new_ts - current_ts) / 1000 if current_ts else 0
-                logger.info(f"✅ Storyteller: {book_title} → {percentage:.1%} (ts+{delta_s:.1f}s)")
+
+                conn.commit()
+                logger.info(f"✅ Storyteller: {ebook_filename} → {percentage:.1%} (ts={new_ts}, leap={new_ts - current_ts}ms)")
                 return True
-                
         except Exception as e:
             logger.error(f"Storyteller write error: {e}")
             return False
 
-    def get_progress(self, ebook_filename):
-        """
-        Get reading progress.
-        
-        Returns: (percentage, timestamp_seconds) or (None, 0)
-        """
-        result = self.get_progress_with_fragment(ebook_filename)
-        return result[0], result[1]
 
-    def get_progress_with_fragment(self, ebook_filename):
-        """
-        Get detailed progress including fragment info.
-        
-        Returns: (percentage, timestamp_seconds, href, fragment_id)
-        """
-        if not self.db_path.exists():
-            return None, 0, None, None
-        
+    def get_recent_activity(self, hours=24, min_progress=0.01):
+        if not self.conn: return []
+        cutoff_ms = int((time.time() - (hours * 3600)) * 1000)
         try:
-            with self._get_connection() as conn:
-                book_uuid, _ = self._find_book_uuid(conn, ebook_filename)
-                if not book_uuid:
-                    return None, 0, None, None
-                
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT locator, timestamp FROM position 
-                    WHERE book_uuid = ? 
-                    ORDER BY timestamp DESC LIMIT 1
-                    """,
-                    (book_uuid,)
-                )
-                
-                row = cursor.fetchone()
-                if row:
-                    try:
-                        locator = json.loads(row['locator']) if row['locator'] else {}
-                    except json.JSONDecodeError:
-                        locator = {}
-                    
-                    pct = float(locator.get('locations', {}).get('totalProgression', 0.0))
-                    ts = float(row['timestamp']) / 1000.0 if row['timestamp'] else 0.0
-                    href = locator.get('href')
-                    fragments = locator.get('locations', {}).get('fragments', [])
-                    fragment_id = fragments[0] if fragments else None
-                    
-                    return pct, ts, href, fragment_id
-                    
+            cursor = self.conn.cursor()
+            query = """
+            SELECT DISTINCT b.uuid, b.title, p.locator, p.timestamp
+            FROM book b JOIN position p ON b.uuid = p.book_uuid
+            WHERE p.timestamp > ? ORDER BY p.timestamp DESC
+            """
+            cursor.execute(query, (cutoff_ms,))
+            rows = cursor.fetchall()
+            results = []
+            seen_uuids = set()
+            for row in rows:
+                if row['uuid'] in seen_uuids: continue
+                try:
+                    locator = json.loads(row['locator']) if row['locator'] else {}
+                    pct = locator.get('locations', {}).get('totalProgression', 0.0)
+                    if pct >= min_progress:
+                        results.append({
+                            "id": row['uuid'],
+                            "title": row['title'],
+                            "progress": pct,
+                            "source": "STORYTELLER"
+                        })
+                        seen_uuids.add(row['uuid'])
+                except json.JSONDecodeError: continue
+            return results
         except Exception as e:
-            logger.error(f"Storyteller read error: {e}")
-        
-        return None, 0, None, None
+            logger.error(f"Failed to query Storyteller activity: {e}")
+            return []
 
-    def add_to_collection(self, ebook_filename, collection_name="ABS Synced"):
-        """
-        Add a book to a Storyteller collection.
-        Creates the collection if it doesn't exist.
-        
-        Args:
-            ebook_filename: The EPUB filename
-            collection_name: Collection name (default: "ABS Synced")
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.db_path.exists():
-            return False
-        
+    def add_to_collection(self, ebook_filename):
+        """Placeholder for adding books to a Storyteller collection."""
+        # Storyteller collections are managed via the app UI
+        # This is a no-op but keeps the interface consistent
+        pass
+
+    def get_book_uuid(self, ebook_filename):
+        """Get the Storyteller book UUID for a given ebook filename."""
+        if not self.conn: return None
         try:
-            import uuid as uuid_lib
-            
-            with self._get_connection() as conn:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT uuid FROM book WHERE title LIKE ?", (f"%{Path(ebook_filename).stem}%",))
+            row = cursor.fetchone()
+            return row['uuid'] if row else None
+        except Exception as e:
+            logger.error(f"Error getting book UUID: {e}")
+            return None
+
+    def force_position_update(self, ebook_filename, percentage, target_href=None):
+        """
+        Force update position with maximum aggression.
+        
+        This method:
+        1. Uses a timestamp 60 seconds in the future
+        2. Completely rebuilds the locator from scratch
+        3. Only keeps the bare minimum needed for Storyteller to work
+        
+        Use this when normal update_progress isn't winning the sync race.
+        """
+        try:
+            with sqlite3.connect(f"file:{self.db_path}", uri=True, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 
-                # Find the book
-                book_uuid, book_title = self._find_book_uuid(conn, ebook_filename)
-                if not book_uuid:
-                    logger.warning(f"Book not found in Storyteller: {ebook_filename}")
+                cursor.execute("SELECT uuid FROM book WHERE title LIKE ?", (f"%{Path(ebook_filename).stem}%",))
+                row = cursor.fetchone()
+                if not row: return False
+                book_uuid = row['uuid']
+                
+                cursor.execute("""
+                    SELECT uuid, locator, timestamp FROM position 
+                    WHERE book_uuid = ? ORDER BY timestamp DESC LIMIT 1
+                """, (book_uuid,))
+                pos_row = cursor.fetchone()
+                
+                if not pos_row:
                     return False
                 
-                # Find or create collection
+                now_ms = int(time.time() * 1000)
+                # EXTREME: 60 second leap into the future
+                new_ts = now_ms + 60000
+                
+                # Build minimal locator - ONLY what Storyteller needs
+                old_locator = {}
+                if pos_row['locator']:
+                    try: old_locator = json.loads(pos_row['locator'])
+                    except: pass
+                
+                locator = {
+                    "type": old_locator.get("type", "application/xhtml+xml"),
+                    "locations": {
+                        "totalProgression": float(percentage)
+                    }
+                }
+                
+                # Keep href if we have it, or use provided target
+                if target_href:
+                    locator["href"] = target_href
+                elif old_locator.get("href"):
+                    locator["href"] = old_locator["href"]
+                
                 cursor.execute(
-                    "SELECT uuid FROM collection WHERE name = ?",
-                    (collection_name,)
+                    "UPDATE position SET locator = ?, timestamp = ? WHERE uuid = ?",
+                    (json.dumps(locator), new_ts, pos_row['uuid'])
                 )
-                row = cursor.fetchone()
-                
-                if row:
-                    collection_uuid = row[0]
-                else:
-                    # Create collection
-                    collection_uuid = str(uuid_lib.uuid4())
-                    cursor.execute(
-                        """
-                        INSERT INTO collection (uuid, name, public, description)
-                        VALUES (?, ?, 1, '')
-                        """,
-                        (collection_uuid, collection_name)
-                    )
-                    logger.info(f"Created Storyteller collection: {collection_name}")
-                
-                # Check if already in collection
-                cursor.execute(
-                    """
-                    SELECT uuid FROM book_to_collection 
-                    WHERE collection_uuid = ? AND book_uuid = ?
-                    """,
-                    (collection_uuid, book_uuid)
-                )
-                if cursor.fetchone():
-                    logger.debug(f"Book already in collection: {book_title}")
-                    return True
-                
-                # Add to collection
-                link_uuid = str(uuid_lib.uuid4())
-                cursor.execute(
-                    """
-                    INSERT INTO book_to_collection (uuid, collection_uuid, book_uuid)
-                    VALUES (?, ?, ?)
-                    """,
-                    (link_uuid, collection_uuid, book_uuid)
-                )
-                
-                logger.info(f"✅ Added to Storyteller collection '{collection_name}': {book_title}")
+
+                conn.commit()
+                logger.info(f"⚡ Storyteller FORCE: {ebook_filename} → {percentage:.1%} (ts={new_ts})")
                 return True
-                
         except Exception as e:
-            logger.error(f"Failed to add to Storyteller collection: {e}")
+            logger.error(f"Storyteller force update error: {e}")
             return False
+# [END FILE]
+

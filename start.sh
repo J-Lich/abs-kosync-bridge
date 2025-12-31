@@ -31,7 +31,7 @@ echo ""
 echo "✅ All services started successfully!"
 echo "   • Sync Daemon PID: $DAEMON_PID"
 echo "   • Web Server PID: $WEB_PID"
-echo "   • Web UI available on port 5757 (map to your preferred external port)"
+echo "   • Web UI available at: http://localhost:5757"
 echo ""
 echo "Press Ctrl+C to stop..."
 

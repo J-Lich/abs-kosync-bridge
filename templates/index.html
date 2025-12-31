@@ -322,6 +322,19 @@
 <body>
     <div class="container">
         <div class="nav-buttons" style="margin-bottom: 20px;">
+            <a href="/suggestions" class="btn" style="position: relative; margin-right: 10px;">
+                💡 Suggestions
+                {% if suggestion_count > 0 %}
+                <span style="
+                    position: absolute; top: -8px; right: -8px;
+                    background: #d32f2f; color: white; border-radius: 50%;
+                    width: 20px; height: 20px; display: flex;
+                    align-items: center; justify-content: center;
+                    font-size: 11px; font-weight: bold;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                ">{{ suggestion_count }}</span>
+                {% endif %}
+            </a>
             <a href="/book-linker" class="btn">🔗 Book Linker</a>
             <a href="/match" class="btn">➕ Single Match</a>
             <a href="/batch-match" class="btn">📋 Batch Match</a>
@@ -329,7 +342,6 @@
         <h1>📚 ABS-KoSync Manager</h1>
 
         {% if mappings %}
-        <!-- Controls -->
         <div class="controls-container">
             <div class="control-group">
                 <label for="sort-select">Sort by:</label>
@@ -370,7 +382,6 @@
                 {% if mapping.status == 'active' %}
                 <div class="card-body">
                     <div class="progress-section">
-                        <!-- Three-Way Progress Display (Compact) -->
                         <div class="progress-header">
                             <div class="progress-stats-unified">
                                 <div class="progress-stat">
@@ -388,7 +399,6 @@
                             </div>
                         </div>
                         
-                        <!-- Single Unified Progress Bar -->
                         <div class="progress-bar-container">
                             <div class="progress-bar" style="width: {{ mapping.unified_progress }}%"></div>
                         </div>

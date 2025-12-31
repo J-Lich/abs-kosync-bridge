@@ -1,13 +1,4 @@
-"""
-ABS-KoSync Bridge - Sync Daemon
-
-HARDENED VERSION with:
-- JsonDB for process-safe file locking
-- Furthest-wins leader election
-- Anti-regression protection
-- Proper state management
-"""
-
+# [START FILE: abs-kosync-enhanced/main.py]
 import os
 import time
 import json
@@ -18,419 +9,263 @@ from pathlib import Path
 from zipfile import ZipFile
 import lxml.etree as ET
 
-# Local modules
 from json_db import JsonDB
 from api_clients import ABSClient, KoSyncClient
+from hardcover_client import HardcoverClient
 from transcriber import AudioTranscriber
 from ebook_utils import EbookParser
-from storyteller_db import StorytellerDB
+from suggestion_manager import SuggestionManager
 
-# --- Logging Configuration ---
+# Try to import Storyteller API client first, fall back to direct DB
+try:
+    from storyteller_api import StorytellerDBWithAPI as StorytellerClient
+    STORYTELLER_MODE = "api"
+except ImportError:
+    from storyteller_db import StorytellerDB as StorytellerClient
+    STORYTELLER_MODE = "sqlite"
+
+# Logging setup
 TRACE_LEVEL_NUM = 5
 logging.addLevelName(TRACE_LEVEL_NUM, "TRACE")
-logging.TRACE = TRACE_LEVEL_NUM
-
 def trace(self, message, *args, **kws):
-    if self.isEnabledFor(TRACE_LEVEL_NUM):
-        self._log(TRACE_LEVEL_NUM, message, args, **kws)
-
+    if self.isEnabledFor(TRACE_LEVEL_NUM): self._log(TRACE_LEVEL_NUM, message, args, **kws)
 logging.Logger.trace = trace
-
-env_log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-log_level = getattr(logging, env_log_level, logging.INFO)
-
 logging.basicConfig(
-    level=log_level,
-    format='%(asctime)s %(levelname)s: %(message)s',
-    datefmt='%H:%M:%S'
+    level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO').upper(), logging.INFO),
+    format='%(asctime)s %(levelname)s: %(message)s', datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
-# --- Paths ---
+# Paths
 DATA_DIR = Path("/data")
 BOOKS_DIR = Path("/books")
 DB_FILE = DATA_DIR / "mapping_db.json"
 STATE_FILE = DATA_DIR / "last_state.json"
 
-
 class SyncManager:
-    """
-    Hardened Sync Manager with:
-    - Process-safe JSON persistence via JsonDB
-    - Furthest-wins leader election
-    - Configurable anti-regression
-    """
-    
     def __init__(self):
-        logger.info("=== Sync Manager Starting (Hardened) ===")
-        
-        # API Clients
+        logger.info("=== Sync Manager Starting (Release 4 - API Support) ===")
         self.abs_client = ABSClient()
         self.kosync_client = KoSyncClient()
-        self.storyteller_db = StorytellerDB()
-        
-        # Processing utilities
+        self.hardcover_client = HardcoverClient()
+        self.storyteller_db = StorytellerClient()
         self.transcriber = AudioTranscriber(DATA_DIR)
         self.ebook_parser = EbookParser(BOOKS_DIR)
-        
-        # Process-safe persistence
         self.db_handler = JsonDB(DB_FILE)
         self.state_handler = JsonDB(STATE_FILE)
-        
-        # Load initial state
         self.db = self.db_handler.load(default={"mappings": []})
         self.state = self.state_handler.load(default={})
+        self.suggestion_manager = SuggestionManager(DATA_DIR, self.ebook_parser, self.abs_client, self.storyteller_db)
         
-        # Thresholds
         self.delta_abs_thresh = float(os.getenv("SYNC_DELTA_ABS_SECONDS", 60))
         self.delta_kosync_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_PERCENT", 1)) / 100.0
         self.delta_char_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_WORDS", 400)) * 5
         self.regression_threshold = float(os.getenv("SYNC_REGRESSION_THRESHOLD", 5)) / 100.0
-        
-        logger.info(f"Thresholds: ABS={self.delta_abs_thresh}s, KoSync={self.delta_kosync_thresh:.1%}, Regression={self.regression_threshold:.0%}")
         
         self.startup_checks()
         self.cleanup_stale_jobs()
 
     def startup_checks(self):
         logger.info("--- Connectivity Checks ---")
-        abs_ok = self.abs_client.check_connection()
-        kosync_ok = self.kosync_client.check_connection()
-        storyteller_ok = self.storyteller_db.check_connection()
-        
-        if not abs_ok:
-            logger.warning("⚠️ Audiobookshelf connection FAILED")
-        if not kosync_ok:
-            logger.warning("⚠️ KoSync connection FAILED")
-        if not storyteller_ok:
-            logger.warning("⚠️ Storyteller DB connection FAILED")
+        self.abs_client.check_connection()
+        self.kosync_client.check_connection()
+        self.storyteller_db.check_connection()
+        if self.hardcover_client.token:
+            if self.hardcover_client.get_user_id(): logger.info("✅ Connected to Hardcover")
+            else: logger.warning("⚠️ Hardcover token failed")
 
     def cleanup_stale_jobs(self):
-        """Reset any crashed jobs to active."""
         changed = False
         for mapping in self.db.get('mappings', []):
             if mapping.get('status') == 'crashed':
                 mapping['status'] = 'active'
                 changed = True
-                logger.info(f"Reset crashed: {mapping.get('abs_title', 'Unknown')}")
-        if changed:
-            self.db_handler.save(self.db)
+        if changed: self.db_handler.save(self.db)
 
-    def _get_abs_title(self, item):
-        """Extract title from ABS item."""
-        title = item.get('media', {}).get('metadata', {}).get('title')
-        if not title:
-            title = item.get('name')
-        if not title:
-            title = item.get('title')
-        return title or "Unknown"
+    def _get_abs_title(self, ab):
+        """Extract title from audiobook item."""
+        media = ab.get('media', {})
+        metadata = media.get('metadata', {})
+        return metadata.get('title') or ab.get('name', 'Unknown')
+
+    def _automatch_hardcover(self, mapping):
+        if not self.hardcover_client.token: return
+        item = self.abs_client.get_item_details(mapping['abs_id'])
+        if not item: return
+        meta = item.get('media', {}).get('metadata', {})
+        match = None
+        if meta.get('isbn'): match = self.hardcover_client.search_by_isbn(meta.get('isbn'))
+        if not match and meta.get('title'): match = self.hardcover_client.search_by_title_author(meta.get('title'), meta.get('authorName'))
+        if match:
+             mapping.update({'hardcover_book_id': match['book_id'], 'hardcover_edition_id': match.get('edition_id'), 'hardcover_pages': match.get('pages')})
+             self.db_handler.save(self.db)
+             self.hardcover_client.update_status(match['book_id'], 2, match.get('edition_id'))
+
+    def _sync_to_hardcover(self, mapping, percentage):
+        if not self.hardcover_client.token or not mapping.get('hardcover_book_id'): return
+        ub = self.hardcover_client.find_user_book(mapping['hardcover_book_id'])
+        if ub:
+             page_num = int((mapping.get('hardcover_pages') or 0) * percentage)
+             self.hardcover_client.update_progress(ub['id'], page_num, mapping.get('hardcover_edition_id'))
+             if percentage > 0.99: self.hardcover_client.update_status(mapping['hardcover_book_id'], 3, mapping.get('hardcover_edition_id'))
+
+    def _get_transcript_duration(self, transcript_path):
+        try:
+            with open(transcript_path, 'r') as f: data = json.load(f)
+            if isinstance(data, list) and data: return data[-1].get('end', 0)
+            return data.get('duration', 0) if isinstance(data, dict) else 0
+        except: return 0
+
+    def _abs_to_percentage(self, abs_seconds, transcript_path):
+        duration = self._get_transcript_duration(transcript_path)
+        return min(max(abs_seconds / duration, 0.0), 1.0) if duration > 0 else None
+
+    def check_pending_jobs(self):
+        self.db = self.db_handler.load(default={"mappings": []})
+        for mapping in self.db.get('mappings', []):
+            if mapping.get('status') == 'pending':
+                logger.info(f"[JOB] Starting: {mapping.get('abs_title')}")
+                mapping['status'] = 'processing'
+                self.db_handler.save(self.db)
+                try:
+                    audio_files = self.abs_client.get_audio_files(mapping['abs_id'])
+                    if not audio_files: raise Exception("No audio files")
+                    transcript_path = self.transcriber.process_audio(mapping['abs_id'], audio_files)
+                    self.ebook_parser.extract_text_and_map(mapping['ebook_filename'])
+                    mapping.update({'transcript_file': str(transcript_path), 'status': 'active'})
+                    self.db_handler.save(self.db)
+                    self._automatch_hardcover(mapping)
+                except Exception as e:
+                    logger.error(f"[FAIL] {mapping.get('abs_title')}: {e}")
+                    mapping['status'] = 'failed_retry_later'
+                    self.db_handler.save(self.db)
+
+    def run_discovery(self):
+        logger.info("🔍 Discovery cycle starting...")
+        self.db = self.db_handler.load(default={"mappings": []})
+        mapped_ids = [m['abs_id'] for m in self.db['mappings']]
+        self.suggestion_manager.run_discovery_cycle(mapped_ids)
+        logger.info("✅ Discovery cycle complete.")
 
     def get_text_from_storyteller_fragment(self, ebook_filename, href, fragment_id):
         """Extract text from EPUB using Storyteller's fragment ID."""
-        if not href or not fragment_id:
-            return None
-        
+        if not href or not fragment_id: return None
         try:
             epub_path = None
             for f in BOOKS_DIR.rglob(ebook_filename):
                 epub_path = f
                 break
-            
-            if not epub_path:
-                return None
+            if not epub_path: return None
             
             with ZipFile(epub_path, 'r') as zip_ref:
                 internal_path = href
                 if internal_path not in zip_ref.namelist():
                     matching = [f for f in zip_ref.namelist() if href in f]
-                    if matching:
-                        internal_path = matching[0]
-                    else:
-                        return None
+                    if matching: internal_path = matching[0]
+                    else: return None
                 
                 with zip_ref.open(internal_path) as f:
                     content = f.read()
                     parser = ET.HTMLParser(encoding='utf-8')
                     tree = ET.fromstring(content, parser)
                     elements = tree.xpath(f"//*[@id='{fragment_id}']")
-                    
-                    if elements:
-                        text = "".join(elements[0].itertext()).strip()
-                        return text
+                    if elements: return "".join(elements[0].itertext()).strip()
         except Exception as e:
             logger.error(f"Fragment extraction error: {e}")
-        
         return None
 
-    def _get_transcript_duration(self, transcript_path):
-        """Get total duration from transcript file."""
-        try:
-            if not transcript_path or not Path(transcript_path).exists():
-                return 0
-            
-            with open(transcript_path, 'r') as f:
-                data = json.load(f)
-            
-            if isinstance(data, list) and data:
-                return data[-1].get('end', 0)
-            elif isinstance(data, dict):
-                duration = data.get('duration', 0)
-                if not duration and data.get('segments'):
-                    duration = data['segments'][-1].get('end', 0)
-                return duration
-            return 0
-        except Exception:
-            return 0
-
-    def _abs_to_percentage(self, abs_seconds, transcript_path):
-        """Convert ABS timestamp to percentage."""
-        duration = self._get_transcript_duration(transcript_path)
-        if duration <= 0:
-            return None  # Can't convert, don't use ABS as leader
-        return min(max(abs_seconds / duration, 0.0), 1.0)
-
-    def check_pending_jobs(self):
-        """Process pending transcription jobs."""
-        # Reload DB to catch web UI changes
-        self.db = self.db_handler.load(default={"mappings": []})
-        
-        for mapping in self.db.get('mappings', []):
-            status = mapping.get('status')
-            abs_title = mapping.get('abs_title', 'Unknown')
-            
-            if status == 'pending':
-                logger.info(f"[JOB] Starting: {abs_title}")
-                mapping['status'] = 'processing'
-                self.db_handler.save(self.db)
-                
-                try:
-                    audio_files = self.abs_client.get_audio_files(mapping['abs_id'])
-                    if not audio_files:
-                        mapping['status'] = 'failed'
-                        self.db_handler.save(self.db)
-                        continue
-                    
-                    transcript_path = self.transcriber.process_audio(mapping['abs_id'], audio_files)
-                    self.ebook_parser.extract_text_and_map(mapping['ebook_filename'])
-                    
-                    mapping['transcript_file'] = str(transcript_path)
-                    mapping['status'] = 'active'
-                    self.db_handler.save(self.db)
-                    logger.info(f"[OK] {abs_title} is now active")
-                    
-                except Exception as e:
-                    logger.error(f"[FAIL] {abs_title}: {e}")
-                    mapping['status'] = 'failed_retry_later'
-                    self.db_handler.save(self.db)
-            
-            elif status == 'pending_transcript':
-                transcript_path = Path(mapping.get('transcript_file', ''))
-                if transcript_path.exists():
-                    logger.info(f"[OK] Transcript ready: {abs_title}")
-                    mapping['status'] = 'active'
-                    self.db_handler.save(self.db)
-
     def sync_cycle(self):
-        """
-        Main sync cycle with FURTHEST-WINS logic.
-        
-        1. Fetch progress from all platforms
-        2. Convert to percentages for comparison
-        3. Highest progress platform becomes leader
-        4. Leader propagates to others
-        5. Anti-regression blocks backwards movement
-        """
         logger.debug("--- Sync Cycle ---")
-        
-        # Reload DB to catch web UI changes
         self.db = self.db_handler.load(default={"mappings": []})
-        
-        if not self.db.get('mappings'):
-            return
-        
-        for mapping in self.db['mappings']:
-            if mapping.get('status', 'active') != 'active':
-                continue
-            
-            abs_id = mapping['abs_id']
-            kosync_id = mapping['kosync_doc_id']
-            transcript_path = mapping.get('transcript_file')
-            ebook_filename = mapping['ebook_filename']
-            abs_title = mapping.get('abs_title', 'Unknown')
+        for mapping in self.db.get('mappings', []):
+            if mapping.get('status') != 'active': continue
+            abs_id, ko_id, epub = mapping['abs_id'], mapping['kosync_doc_id'], mapping['ebook_filename']
             
             try:
-                # === FETCH PROGRESS ===
-                abs_seconds = self.abs_client.get_progress(abs_id) or 0.0
-                kosync_pct = self.kosync_client.get_progress(kosync_id) or 0.0
-                storyteller_pct, _ = self.storyteller_db.get_progress(ebook_filename)
-                storyteller_pct = storyteller_pct or 0.0
-                
-                # Convert ABS to percentage
-                abs_pct = self._abs_to_percentage(abs_seconds, transcript_path)
-                
-                logger.debug(f"[{abs_title}] ABS={abs_seconds:.0f}s ({abs_pct:.1%} if valid), KO={kosync_pct:.1%}, ST={storyteller_pct:.1%}")
-                
+                abs_ts = self.abs_client.get_progress(abs_id) or 0.0
+                ko_pct = self.kosync_client.get_progress(ko_id) or 0.0
+                st_pct, _ = self.storyteller_db.get_progress(epub)
+                st_pct = st_pct or 0.0
+                abs_pct = self._abs_to_percentage(abs_ts, mapping.get('transcript_file'))
             except Exception as e:
-                logger.error(f"Fetch failed for {abs_title}: {e}")
+                logger.debug(f"Error fetching progress: {e}")
                 continue
-            
-            # === LOAD PREVIOUS STATE ===
+
             prev = self.state.get(abs_id, {})
-            prev_abs_ts = prev.get('abs_ts', 0)
-            prev_abs_pct = prev.get('abs_pct', 0)
-            prev_kosync = prev.get('kosync_pct', 0)
-            prev_storyteller = prev.get('storyteller_pct', 0)
+            abs_changed = abs(abs_ts - prev.get('abs_ts', 0)) > self.delta_abs_thresh
+            ko_changed = abs(ko_pct - prev.get('kosync_pct', 0)) > self.delta_kosync_thresh
+            st_changed = abs(st_pct - prev.get('storyteller_pct', 0)) > self.delta_kosync_thresh
             
-            # === DETECT CHANGES ===
-            abs_changed = abs(abs_seconds - prev_abs_ts) > self.delta_abs_thresh
-            kosync_changed = abs(kosync_pct - prev_kosync) > self.delta_kosync_thresh
-            storyteller_changed = abs(storyteller_pct - prev_storyteller) > self.delta_kosync_thresh
-            
-            # Character-based threshold for KoSync
-            if not kosync_changed and kosync_pct != prev_kosync:
-                char_delta = self.ebook_parser.get_character_delta(
-                    ebook_filename, prev_kosync, kosync_pct
-                )
-                if char_delta and char_delta > self.delta_char_thresh:
-                    kosync_changed = True
-            
-            # No significant changes
-            if not abs_changed and not kosync_changed and not storyteller_changed:
-                # Still update state for tiny changes to prevent loops
-                if abs_seconds != prev_abs_ts or kosync_pct != prev_kosync or storyteller_pct != prev_storyteller:
-                    self.state[abs_id] = {
-                        'abs_ts': abs_seconds,
-                        'abs_pct': abs_pct if abs_pct else prev_abs_pct,
-                        'kosync_pct': kosync_pct,
-                        'storyteller_pct': storyteller_pct,
-                        'last_updated': prev.get('last_updated', 0)
-                    }
-                    self.state_handler.save(self.state)
+            if not any([abs_changed, ko_changed, st_changed]):
+                self.state[abs_id] = {'abs_ts': abs_ts, 'abs_pct': abs_pct or 0, 'kosync_pct': ko_pct, 'storyteller_pct': st_pct, 'last_updated': prev.get('last_updated', 0)}
+                self.state_handler.save(self.state)
                 continue
-            
-            # === FURTHEST-WINS LEADER ELECTION ===
-            # Build progress map (only include ABS if we can convert it)
-            progress_map = {
-                'KOSYNC': kosync_pct,
-                'STORYTELLER': storyteller_pct
-            }
-            if abs_pct is not None:
-                progress_map['ABS'] = abs_pct
-            
+
+            progress_map = {'KOSYNC': ko_pct, 'STORYTELLER': st_pct}
+            if abs_pct is not None: progress_map['ABS'] = abs_pct
             leader = max(progress_map, key=progress_map.get)
             leader_pct = progress_map[leader]
             
-            changed_list = []
-            if abs_changed:
-                changed_list.append('ABS')
-            if kosync_changed:
-                changed_list.append('KOSYNC')
-            if storyteller_changed:
-                changed_list.append('STORYTELLER')
+            logger.info(f"[{mapping.get('abs_title')}] Leader: {leader} ({leader_pct:.1%})")
             
-            logger.info(f"[{abs_title}] Changed: {changed_list}, Leader: {leader} ({leader_pct:.1%})")
-            
-            # === ANTI-REGRESSION CHECK ===
-            prev_max = max(prev_abs_pct or 0, prev_kosync, prev_storyteller)
-            
-            if prev_max > 0 and (prev_max - leader_pct) > self.regression_threshold:
-                logger.warning(f"  ⚠️ REGRESSION BLOCKED: {prev_max:.1%} → {leader_pct:.1%}")
-                # Update state to prevent repeated warnings
-                self.state[abs_id] = {
-                    'abs_ts': abs_seconds,
-                    'abs_pct': abs_pct if abs_pct else prev_abs_pct,
-                    'kosync_pct': kosync_pct,
-                    'storyteller_pct': storyteller_pct,
-                    'last_updated': time.time()
-                }
-                self.state_handler.save(self.state)
-                continue
-            
-            # === PROPAGATE FROM LEADER ===
             sync_success = False
+            final_ts = abs_ts
             final_pct = leader_pct
-            final_abs_ts = abs_seconds
             
             try:
                 if leader == 'ABS':
-                    target_text = self.transcriber.get_text_at_time(transcript_path, abs_seconds)
-                    if target_text:
-                        matched_pct, xpath, _ = self.ebook_parser.find_text_location(
-                            ebook_filename, target_text, hint_percentage=abs_pct
-                        )
-                        if matched_pct is not None:
-                            logger.info(f"  → ABS ({abs_pct:.1%}) syncing to {matched_pct:.1%}")
-                            self.kosync_client.update_progress(kosync_id, matched_pct, xpath)
-                            self.storyteller_db.update_progress(ebook_filename, matched_pct)
-                            final_pct = matched_pct
+                    txt = self.transcriber.get_text_at_time(mapping.get('transcript_file'), abs_ts)
+                    if txt:
+                        match_pct, xpath, _ = self.ebook_parser.find_text_location(epub, txt, hint_percentage=abs_pct)
+                        if match_pct:
+                            self.kosync_client.update_progress(ko_id, match_pct, xpath)
+                            self.storyteller_db.update_progress(epub, match_pct)
+                            final_pct = match_pct
                             sync_success = True
-                
                 elif leader == 'KOSYNC':
-                    target_text = self.ebook_parser.get_text_at_percentage(ebook_filename, kosync_pct)
-                    if target_text:
-                        matched_time = self.transcriber.find_time_for_text(transcript_path, target_text)
-                        if matched_time is not None:
-                            logger.info(f"  → KoSync ({kosync_pct:.1%}) syncing to {matched_time:.0f}s")
-                            self.abs_client.update_progress(abs_id, matched_time)
-                            self.storyteller_db.update_progress(ebook_filename, kosync_pct)
-                            final_abs_ts = matched_time
+                    txt = self.ebook_parser.get_text_at_percentage(epub, ko_pct)
+                    if txt:
+                        ts = self.transcriber.find_time_for_text(mapping.get('transcript_file'), txt)
+                        if ts:
+                            self.abs_client.update_progress(abs_id, ts)
+                            self.storyteller_db.update_progress(epub, ko_pct)
+                            final_ts = ts
                             sync_success = True
-                
                 elif leader == 'STORYTELLER':
-                    # Try fragment-based text first
-                    st_pct, _, href, frag_id = self.storyteller_db.get_progress_with_fragment(ebook_filename)
-                    target_text = None
-                    
-                    if frag_id:
-                        target_text = self.get_text_from_storyteller_fragment(ebook_filename, href, frag_id)
-                    
-                    if not target_text or len(target_text) < 100:
-                        target_text = self.ebook_parser.get_text_at_percentage(ebook_filename, storyteller_pct)
-                    
-                    if target_text:
-                        matched_time = self.transcriber.find_time_for_text(transcript_path, target_text)
-                        if matched_time is not None:
-                            logger.info(f"  → Storyteller ({storyteller_pct:.1%}) syncing to {matched_time:.0f}s")
-                            self.abs_client.update_progress(abs_id, matched_time)
-                            _, xpath, _ = self.ebook_parser.find_text_location(ebook_filename, target_text)
-                            self.kosync_client.update_progress(kosync_id, storyteller_pct, xpath)
-                            final_abs_ts = matched_time
+                    # Try to get fragment-based text for more accurate sync
+                    _, _, href, frag = self.storyteller_db.get_progress_with_fragment(epub)
+                    txt = self.get_text_from_storyteller_fragment(epub, href, frag) if frag else None
+                    if not txt: txt = self.ebook_parser.get_text_at_percentage(epub, st_pct)
+                    if txt:
+                        ts = self.transcriber.find_time_for_text(mapping.get('transcript_file'), txt)
+                        if ts:
+                            self.abs_client.update_progress(abs_id, ts)
+                            _, xpath, _ = self.ebook_parser.find_text_location(epub, txt)
+                            self.kosync_client.update_progress(ko_id, st_pct, xpath)
+                            final_ts = ts
                             sync_success = True
                 
+                if sync_success and final_pct > 0.01:
+                    if not mapping.get('hardcover_book_id'): self._automatch_hardcover(mapping)
+                    if mapping.get('hardcover_book_id'): self._sync_to_hardcover(mapping, final_pct)
             except Exception as e:
-                logger.error(f"  Sync error: {e}")
-            
-            # === UPDATE STATE ===
-            self.state[abs_id] = {
-                'abs_ts': final_abs_ts,
-                'abs_pct': self._abs_to_percentage(final_abs_ts, transcript_path) or abs_pct or 0,
-                'kosync_pct': final_pct if leader != 'ABS' else kosync_pct,
-                'storyteller_pct': final_pct if leader != 'ABS' else storyteller_pct,
-                'last_updated': time.time()
-            }
+                logger.error(f"Sync failed: {e}")
+
+            self.state[abs_id] = {'abs_ts': final_ts, 'abs_pct': self._abs_to_percentage(final_ts, mapping.get('transcript_file')) or 0, 'kosync_pct': final_pct, 'storyteller_pct': final_pct, 'last_updated': time.time()}
             self.state_handler.save(self.state)
-            
-            if sync_success:
-                logger.info(f"  ✅ Sync complete")
-            else:
-                logger.warning(f"  ⚠️ Sync failed, state updated")
 
     def run_daemon(self):
-        """Run the sync daemon."""
-        period = int(os.getenv("SYNC_PERIOD_MINS", 5))
-        schedule.every(period).minutes.do(self.sync_cycle)
+        schedule.every(int(os.getenv("SYNC_PERIOD_MINS", 5))).minutes.do(self.sync_cycle)
         schedule.every(1).minutes.do(self.check_pending_jobs)
-        
-        logger.info(f"Daemon started. Sync every {period} mins.")
-        
-        # Initial sync
+        schedule.every(15).minutes.do(self.run_discovery)
+        logger.info("Daemon started.")
         self.sync_cycle()
-        
+        self.run_discovery()
         while True:
             schedule.run_pending()
             time.sleep(30)
 
-
 if __name__ == "__main__":
     manager = SyncManager()
     manager.run_daemon()
+# [END FILE]

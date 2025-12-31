@@ -1,3 +1,4 @@
+# [START FILE: abs-kosync-enhanced/transcriber.py]
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ from faster_whisper import WhisperModel
 import requests
 import ffmpeg
 import math
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
@@ -19,22 +21,29 @@ class AudioTranscriber:
         self.transcripts_dir.mkdir(parents=True, exist_ok=True)
         self.cache_root = data_dir / "audio_cache"
         self.cache_root.mkdir(parents=True, exist_ok=True)
-        self.model_size = "tiny" 
+        self.model_size = "tiny"
+        
+        # Simple LRU Cache for loaded transcripts
+        self._transcript_cache = OrderedDict()
+        self._cache_capacity = 3
 
-    def _get_audio_duration(self, filepath):
+    def _get_cached_transcript(self, path):
+        path_str = str(path)
+        if path_str in self._transcript_cache:
+            self._transcript_cache.move_to_end(path_str)
+            return self._transcript_cache[path_str]
+        
         try:
-            cmd = [
-                "ffprobe", 
-                "-v", "error", 
-                "-show_entries", "format=duration", 
-                "-of", "default=noprint_wrappers=1:nokey=1", 
-                str(filepath)
-            ]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            return float(result.stdout.strip())
+            with open(path, 'r') as f:
+                data = json.load(f)
+            self._transcript_cache[path_str] = data
+            self._transcript_cache.move_to_end(path_str)
+            if len(self._transcript_cache) > self._cache_capacity:
+                self._transcript_cache.popitem(last=False)
+            return data
         except Exception as e:
-            logger.error(f"Failed to get duration for {filepath}: {e}")
-            return 0.0
+            logger.error(f"Error loading transcript {path}: {e}")
+            return None
 
     def get_audio_duration(self, file_path):
         """Returns the duration of the audio file in seconds using ffprobe."""
@@ -48,11 +57,10 @@ class AudioTranscriber:
         try:
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             return float(result.stdout.strip())
-        except (ValueError, subprocess.CalledProcessError):
-            logger.error(f"Could not determine duration for {file_path}")
+        except (ValueError, subprocess.CalledProcessError) as e:
+            logger.error(f"Could not determine duration for {file_path}: {e}")
             return 0.0
 
-    ## NOTE TO FUTURE ME - 45mins is hard coded - add to environment variables for user vconfiguration
     def split_audio_file(self, file_path, target_max_duration_sec=2700): # 2700s = 45 mins
         """
         Checks if file exceeds max duration. If so, splits it into even chunks 
@@ -81,13 +89,6 @@ class AudioTranscriber:
             new_filename = f"{base_name}_split_{i+1:03d}{extension}"
             new_path = file_path.parent / new_filename
             
-            # FFmpeg command to slice audio
-            # -ss : Start time
-            # -t  : Duration of the clip
-            # -map 0:a : Only copy audio streams (ignore cover art/metadata)
-            # -c copy : Stream copy (FAST, no re-encoding, low RAM)
-            # Note: If precise cutting is required and -c copy is inaccurate, 
-            # remove '-c', 'copy' to re-encode (slower but precise).
             cmd = [
                 'ffmpeg', '-y',
                 '-i', str(file_path),
@@ -121,7 +122,6 @@ class AudioTranscriber:
         book_cache_dir.mkdir(parents=True, exist_ok=True)
 
         downloaded_files = []
-        ## Note to future me - this hard coded!
         MAX_DURATION_SECONDS = 45 * 60  # 45 minutes
 
         try:
@@ -131,9 +131,7 @@ class AudioTranscriber:
             for idx, audio_data in enumerate(audio_urls):
                 stream_url = audio_data['stream_url']
                 extension = audio_data.get('ext', '.mp3')
-                local_filename_old = f"part_{idx:03d}.mp3"
                 local_filename = f"part_{idx:03d}{extension}"
-                logger.debug(f"NEW {local_filename} -- {local_filename_old}")
                 local_path = book_cache_dir / local_filename
                 
                 logger.info(f"   Downloading Part {idx + 1}/{len(audio_urls)}...")
@@ -149,9 +147,7 @@ class AudioTranscriber:
                         raise ValueError(f"File {local_path} is empty or missing.")
 
                     # --- PHASE 1.5: Identify if audio exceeds 45min limit and chunk if necessary ---
-                    # Check length and split if necessary before appending
                     final_parts = self.split_audio_file(local_path, MAX_DURATION_SECONDS)
-                    
                     downloaded_files.extend(final_parts)
                     
                 except Exception as e:
@@ -163,16 +159,14 @@ class AudioTranscriber:
             # --- PHASE 2: TRANSCRIBE ---
             logger.info(f"🧠 Phase 2: Transcribing using {self.model_size} model...")
             
-            # Optimization: cpu_threads set explicitly, compute_type int8
             model = WhisperModel(self.model_size, device="cpu", compute_type="int8", cpu_threads=4)
             full_transcript = []
             cumulative_duration = 0.0
 
             for idx, local_path in enumerate(downloaded_files):
-                duration = self._get_audio_duration(local_path)
+                duration = self.get_audio_duration(local_path)
                 logger.info(f"   Transcribing Part {idx + 1}/{len(downloaded_files)} (Length: {duration:.2f}s)...")
                 
-                # CRITICAL FIX: beam_size=1 (Greedy Search) prevents OOM on long files
                 segments, info = model.transcribe(str(local_path), beam_size=1, best_of=1)
                 
                 for segment in segments:
@@ -183,8 +177,6 @@ class AudioTranscriber:
                     })
                 
                 cumulative_duration += duration
-                
-                # Optimization: Force garbage collection after each part
                 gc.collect()
 
             # --- PHASE 3: SAVE ---
@@ -207,8 +199,8 @@ class AudioTranscriber:
 
     def get_text_at_time(self, transcript_path, timestamp):
         try:
-            with open(transcript_path, 'r') as f:
-                data = json.load(f)
+            data = self._get_cached_transcript(transcript_path)
+            if not data: return None
 
             target_idx = -1
             for i, seg in enumerate(data):
@@ -257,8 +249,8 @@ class AudioTranscriber:
     def find_time_for_text(self, transcript_path, search_text):
         from rapidfuzz import process, fuzz
         try:
-            with open(transcript_path, 'r') as f:
-                data = json.load(f)
+            data = self._get_cached_transcript(transcript_path)
+            if not data: return None
             
             texts = [d['text'] for d in data]
             match = process.extractOne(search_text, texts, scorer=fuzz.partial_ratio)
@@ -270,3 +262,4 @@ class AudioTranscriber:
             logger.error(f"Error searching transcript {transcript_path}: {e}")
         
         return None
+# [END FILE]
