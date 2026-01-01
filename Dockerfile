@@ -18,13 +18,11 @@ COPY suggestion_manager.py /app/src/suggestion_manager.py
 # Copy web server to /app root
 COPY web_server.py /app/web_server.py
 
+ENV PYTHONPATH="${PYTHONPATH}:/app/src"
+
 # Create templates directory and copy HTML templates
 RUN mkdir -p /app/templates
-COPY index.html /app/templates/index.html
-COPY match.html /app/templates/match.html
-COPY batch_match.html /app/templates/batch_match.html
-COPY book_linker.html /app/templates/book_linker.html
-COPY suggestions.html /app/templates/suggestions.html
+COPY templates/ /app/templates/
 
 # Copy and set permissions for startup script
 COPY start.sh /app/start.sh
