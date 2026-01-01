@@ -1,3 +1,5 @@
+Quick note: latest updates removed the requirement for storyteller user_id and updated to user username/password. 
+
 # ABS-KoSync Enhanced
 
 > Enhanced fork of [abs-kosync-bridge](https://github.com/00jlich/abs-kosync-bridge) with three-way sync, web UI, and automated workflows.
