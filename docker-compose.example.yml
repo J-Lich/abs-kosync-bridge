@@ -1,4 +1,4 @@
-﻿# ABS-KoSync Enhanced - Example Docker Compose Configuration
+# ABS-KoSync Enhanced - Example Docker Compose Configuration
 # 
 # Copy this file to docker-compose.yml and fill in your values.
 # See README.md for detailed configuration instructions.
@@ -59,7 +59,6 @@ services:
       # Option 2: Direct SQLite (Legacy - may be overwritten by mobile app)
       # Only used as fallback if API credentials not set
       - STORYTELLER_DB_PATH=/storyteller_data/storyteller.db
-      - STORYTELLER_USER_ID=your_storyteller_user_uuid
 
       # ============================================
       # Booklore Integration (OPTIONAL)
