@@ -32,7 +32,7 @@ STATE_FILE = DATA_DIR / "last_state.json"
 
 class SyncManager:
     def __init__(self):
-        logger.info("=== Sync Manager Starting (Release 5.3 - Fix KeyError) ===")
+        logger.info("=== Sync Manager Starting (Release 5.8 - Atomic Snapshot) ===")
         self.abs_client = ABSClient()
         self.kosync_client = KoSyncClient()
         self.hardcover_client = HardcoverClient()
@@ -159,16 +159,32 @@ class SyncManager:
             abs_id, ko_id, epub = mapping['abs_id'], mapping['kosync_doc_id'], mapping['ebook_filename']
             
             try:
+                # 1. Fetch raw states (SNAPSHOT)
+                # We fetch EVERYTHING from Storyteller now to ensure consistency.
+                st_pct, st_ts, st_href, st_frag = self.storyteller_db.get_progress_with_fragment(epub)
+                
                 abs_ts = self.abs_client.get_progress(abs_id)
                 ko_pct = self.kosync_client.get_progress(ko_id)
-                st_pct, _ = self.storyteller_db.get_progress(epub)
                 
-                if abs_ts is None: continue 
+                # 2. [STRICT GUARD] If any service is offline (returns None), SKIP this book.
                 
+                if abs_ts is None:
+                    continue
+
                 abs_pct = self._abs_to_percentage(abs_ts, mapping.get('transcript_file'))
                 
+                if abs_ts > 0 and abs_pct is None:
+                    logger.warning(f"[{mapping.get('abs_title')}] Skipping: ABS active ({abs_ts}s) but transcript invalid.")
+                    continue
+
+                if ko_pct is None:
+                    continue
+
+                if st_pct is None:
+                    continue
+                
                 prev = self.state.get(abs_id, {})
-                vals = {'ABS': abs_pct or 0, 'KOSYNC': ko_pct or 0, 'STORYTELLER': st_pct or 0}
+                vals = {'ABS': abs_pct or 0, 'KOSYNC': ko_pct, 'STORYTELLER': st_pct}
                 
                 changed = False
                 if abs(vals['ABS'] - prev.get('abs_pct', 0)) > 0.01: changed = True
@@ -176,13 +192,17 @@ class SyncManager:
                 if abs(vals['STORYTELLER'] - prev.get('storyteller_pct', 0)) > self.delta_kosync_thresh: changed = True
                 
                 if not changed:
-                    # FIX: Initialize key if missing before updating
-                    if abs_id not in self.state:
-                        self.state[abs_id] = prev
+                    if abs_id not in self.state: self.state[abs_id] = prev
                     self.state[abs_id]['last_updated'] = prev.get('last_updated', 0)
                     continue
 
                 leader = max(vals, key=vals.get)
+                
+                # [SAFETY CHECK] 0% Leader Protection
+                if vals[leader] == 0.0 and max(prev.get('abs_pct', 0), prev.get('kosync_pct', 0)) > 0.05:
+                    logger.warning(f"[{mapping.get('abs_title')}] IGNORING RESET: Leader is 0% but history was >5%.")
+                    continue
+
                 logger.info(f"[{mapping.get('abs_title')}] Leader: {leader} ({vals[leader]:.1%})")
                 
                 final_ts, final_pct = abs_ts, vals[leader]
@@ -210,8 +230,9 @@ class SyncManager:
                             sync_success = True
 
                 elif leader == 'STORYTELLER':
-                    _, _, href, frag = self.storyteller_db.get_progress_with_fragment(epub)
-                    txt = self.get_text_from_storyteller_fragment(epub, href, frag) if frag else None
+                    # Use the SNAPSHOT data (st_href, st_frag) fetched at start of cycle.
+                    # Do NOT query DB again, which might return stale/mismatched data.
+                    txt = self.get_text_from_storyteller_fragment(epub, st_href, st_frag) if st_frag else None
                     if not txt: txt = self.ebook_parser.get_text_at_percentage(epub, st_pct)
                     
                     if txt:
