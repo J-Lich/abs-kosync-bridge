@@ -1,4 +1,5 @@
 Quick note: latest updates removed the requirement for storyteller user_id and updated to user username/password. 
+For most consistent sync with Storyteller recommend using https://github.com/kyonifer/silveran-reader Available for Apple devices.
 
 # ABS-KoSync Enhanced
 
