@@ -213,7 +213,14 @@ class EbookParser:
     def _generate_xpath(self, html_content, local_target_index):
         """
         Generate XPath and return the DOM Tag for CSS generation.
-        Returns: (xpath_string, target_tag_object)
+        
+        IMPROVEMENT: Uses ID Anchoring to create more robust paths.
+        If we find an element with an ID as we climb the tree, we anchor
+        the XPath there (e.g., //*[@id='chapter1']/p[5]) instead of counting
+        from the root. This bypasses DOM drift caused by renderer differences
+        between BeautifulSoup and KOReader's crengine.
+        
+        Returns: (xpath_string, target_tag_object, is_anchored)
         """
         soup = BeautifulSoup(html_content, 'html.parser')
         current_char_count = 0
@@ -229,15 +236,28 @@ class EbookParser:
             current_char_count += text_len
             if current_char_count < local_target_index: current_char_count += 1
         
-        # FIX: Must return tuple (str, None) to match signature
-        if not target_tag: return "/body/div/p[1]", None
+        if not target_tag: return "/body/div/p[1]", None, False
         
         path_segments = []
         curr = target_tag
+        found_anchor = False
+        
         while curr and curr.name != '[document]':
             if curr.name == 'body':
+                # We hit the top without finding an ID
                 path_segments.append("body")
                 break
+            
+            # Check for ID to create an anchor point
+            # This makes XPath more robust against renderer DOM differences
+            if curr.has_attr('id') and curr['id']:
+                # We found a stable ID! Stop climbing.
+                # Use contains() for flexibility with namespaced IDs
+                path_segments.append(f"*[@id='{curr['id']}']")
+                found_anchor = True
+                break
+            
+            # Standard sibling counting (only count same-name siblings)
             index = 1
             sibling = curr.previous_sibling
             while sibling:
@@ -247,8 +267,15 @@ class EbookParser:
             path_segments.append(f"{curr.name}[{index}]")
             curr = curr.parent
         
-        xpath = "/" + "/".join(reversed(path_segments))
-        return xpath, target_tag
+        # Build the final xpath
+        if found_anchor:
+            # Anchored path starts with // to find the ID anywhere in scope
+            xpath = "//" + "/".join(reversed(path_segments))
+        else:
+            # Absolute path from body
+            xpath = "/" + "/".join(reversed(path_segments))
+        
+        return xpath, target_tag, found_anchor
 
     def _normalize(self, text):
         return re.sub(r'[^a-z0-9]', '', text.lower())
@@ -304,14 +331,27 @@ class EbookParser:
                         local_index = match_index - item['start']
 
                         # Generate XPath (for KoReader), CSS Selector (for Storyteller), and CFI (for Booklore)
-                        xpath_str, target_tag = self._generate_xpath(item['content'], local_index)
+                        xpath_str, target_tag, is_anchored = self._generate_xpath(item['content'], local_index)
                         css_selector = self._generate_css_selector(target_tag)
                         cfi = self._generate_cfi(item['spine_index'] - 1, item['content'], local_index)
+
+                        # Build final XPath with DocFragment prefix
+                        # DocFragment scopes the search to the correct chapter
+                        doc_frag_prefix = f"/body/DocFragment[{item['spine_index']}]"
+                        
+                        if is_anchored:
+                            # ID Anchor found: xpath_str looks like //*[@id='abc']/p[1]
+                            # Final: /body/DocFragment[X]//*[@id='abc']/p[1]
+                            final_xpath = f"{doc_frag_prefix}{xpath_str}"
+                        else:
+                            # Absolute fallback: xpath_str looks like /body/div[1]/p[1]
+                            # Final: /body/DocFragment[X]/body/div[1]/p[1]
+                            final_xpath = f"{doc_frag_prefix}{xpath_str}"
 
                         rich_locator = {
                             "href": item['href'],
                             "cssSelector": css_selector,
-                            "xpath": f"/body/DocFragment[{item['spine_index']}]{xpath_str}",
+                            "xpath": final_xpath,
                             "cfi": cfi,
                             "match_index": match_index
                         }

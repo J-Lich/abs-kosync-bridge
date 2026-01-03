@@ -173,6 +173,53 @@ class StorytellerAPIClient:
         if not book: return False
         return self.update_position(book['uuid'], percentage, rich_locator)
 
+    # --- NEW: Collection Logic Added Here ---
+    def add_to_collection(self, ebook_filename: str, collection_name: str = None) -> bool:
+        """Add book to a Storyteller collection (creating it if needed)."""
+        if not collection_name:
+            collection_name = os.environ.get("STORYTELLER_COLLECTION_NAME", "Synced with KOReader")
+        
+        book = self.find_book_by_title(ebook_filename)
+        if not book: 
+            logger.warning(f"Storyteller: Book not found for collection add: {ebook_filename}")
+            return False
+        
+        # 1. Get Collections
+        r = self._make_request("GET", "/api/v2/collections")
+        if not r or r.status_code != 200:
+             logger.error("Storyteller: Failed to list collections")
+             return False
+
+        collections = r.json()
+        target_col = next((c for c in collections if c.get('name') == collection_name), None)
+
+        # 2. Create if missing
+        if not target_col:
+            r_create = self._make_request("POST", "/api/v2/collections", {"name": collection_name})
+            if r_create and r_create.status_code in [200, 201]:
+                target_col = r_create.json()
+                logger.info(f"Storyteller: Created collection '{collection_name}'")
+            else:
+                logger.error(f"Storyteller: Failed to create collection '{collection_name}'")
+                return False
+
+        # 3. Add book to collection
+        col_uuid = target_col.get('uuid') or target_col.get('id')
+        book_uuid = book.get('uuid') or book.get('id')
+        
+        if not col_uuid or not book_uuid: return False
+        
+        add_endpoint = f"/api/v2/collections/{col_uuid}/books"
+        payload = {"books": [book_uuid]} 
+        
+        r_add = self._make_request("POST", add_endpoint, payload)
+        if r_add and r_add.status_code in [200, 204]:
+             logger.info(f"✅ Storyteller: Added '{ebook_filename}' to '{collection_name}'")
+             return True
+        else:
+             logger.error(f"Storyteller: Failed to add book to collection: {r_add.status_code if r_add else 'Err'}")
+             return False
+
 
 class StorytellerDBWithAPI:
     def __init__(self):
@@ -221,7 +268,11 @@ class StorytellerDBWithAPI:
         return []
     
     def add_to_collection(self, ebook_filename: str):
-        if self.db_fallback: self.db_fallback.add_to_collection(ebook_filename)
+        # --- FIXED: Use the API client if available ---
+        if self.api_client: 
+            self.api_client.add_to_collection(ebook_filename)
+        elif self.db_fallback: 
+            self.db_fallback.add_to_collection(ebook_filename)
 
 def create_storyteller_client():
     return StorytellerDBWithAPI()
