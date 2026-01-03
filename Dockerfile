@@ -1,10 +1,39 @@
 # [START FILE: abs-kosync-enhanced/Dockerfile]
-FROM 00jlich/abs-kosync-bridge:latest
+FROM python:3.11-slim
 
-# Install additional Python dependencies (Flask, XML, Fuzzy Matching)
-RUN pip install --no-cache-dir flask lxml rapidfuzz
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    FLASK_APP=web_server.py \
+    PYTHONPATH="/app/src"
 
-# Copy enhanced Python modules to src/ directory
+WORKDIR /app
+
+# 1. Install System Dependencies
+# FFmpeg with full codec support for audio conversion
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libavcodec-extra \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Install Python Dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+    flask \
+    requests \
+    lxml \
+    rapidfuzz \
+    schedule \
+    faster-whisper \
+    EbookLib \
+    beautifulsoup4
+
+# 3. Create directories
+RUN mkdir -p /app/src /app/templates /app/static /data/audio_cache /data/logs /data/transcripts
+
+# 4. Copy Application Code
 COPY main.py /app/src/main.py
 COPY storyteller_db.py /app/src/storyteller_db.py
 COPY storyteller_api.py /app/src/storyteller_api.py
@@ -16,26 +45,17 @@ COPY hardcover_client.py /app/src/hardcover_client.py
 COPY suggestion_manager.py /app/src/suggestion_manager.py
 COPY booklore_client.py /app/src/booklore_client.py
 
-# Copy web server to /app root
 COPY web_server.py /app/web_server.py
-
-ENV PYTHONPATH="${PYTHONPATH}:/app/src"
-
-# Create templates directory and copy HTML templates
-RUN mkdir -p /app/templates
 COPY templates/ /app/templates/
-
-# Copy static assets (icons, etc.)
-RUN mkdir -p /app/static
 COPY static/ /app/static/
 
-# Copy and set permissions for startup script
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Expose web UI port
 EXPOSE 5757
 
-# Run startup script (starts both daemon and web server)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:5757/ || exit 1
+
 CMD ["/app/start.sh"]
 # [END FILE]
