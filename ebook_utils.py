@@ -399,4 +399,65 @@ class EbookParser:
         except Exception:
             return None
 
+# --- NEW: Resolve KOReader XPath ---
+    def resolve_xpath(self, filename, xpath_str):
+        """
+        Resolves a KOReader XPath (e.g., /body/DocFragment[18]/body/div/p[1]) to text.
+        """
+        try:
+            # 1. Parse spine index from DocFragment[N]
+            match = re.search(r'DocFragment\[(\d+)\]', xpath_str)
+            if not match: return None
+            spine_index = int(match.group(1)) # 1-based index
+
+            # 2. Get the specific spine item
+            book_path = self._resolve_book_path(filename)
+            full_text, spine_map = self.extract_text_and_map(book_path)
+            
+            target_item = next((i for i in spine_map if i['spine_index'] == spine_index), None)
+            if not target_item: return None
+
+            # 3. Clean up the path relative to the body
+            relative_path = xpath_str.split(f"DocFragment[{spine_index}]")[-1]
+            
+            soup = BeautifulSoup(target_item['content'], 'html.parser')
+            target_element = None
+
+            # Strategy A: ID Lookup
+            id_match = re.search(r"@id='([^']+)'", relative_path)
+            if id_match:
+                target_element = soup.find(id=id_match.group(1))
+            
+            # Strategy B: Simple Traversal
+            if not target_element:
+                curr = soup.find('body') or soup
+                segments = [s for s in relative_path.split('/') if s and s != 'body']
+                for seg in segments:
+                    tag_match = re.match(r"([a-z0-9]+)(\[(\d+)\])?", seg, re.IGNORECASE)
+                    if not tag_match: break
+                    tag_name = tag_match.group(1)
+                    idx = int(tag_match.group(3)) if tag_match.group(3) else 1
+                    children = curr.find_all(tag_name, recursive=False)
+                    if len(children) >= idx: curr = children[idx-1]
+                    else: 
+                        curr = None
+                        break
+                target_element = curr
+
+            if not target_element: return None
+
+            elem_text = target_element.get_text(separator=' ', strip=True)
+            if not elem_text: return None
+            
+            chapter_text = BeautifulSoup(target_item['content'], 'html.parser').get_text(separator=' ', strip=True)
+            local_offset = chapter_text.find(elem_text)
+            if local_offset == -1: return None
+            
+            global_offset = target_item['start'] + local_offset
+            return full_text[global_offset : global_offset + 500]
+
+        except Exception as e:
+            logger.error(f"Error resolving XPath {xpath_str}: {e}")
+            return None
+
 # [END FILE]
