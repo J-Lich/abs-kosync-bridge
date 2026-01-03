@@ -239,7 +239,7 @@ class HardcoverClient:
         """
         Update reading progress with proper date handling.
         
-        CRITICAL: Matches hardcover_api.lua lines 539-571 exactly!
+      
         started_at and finished_at are TOP-LEVEL variables, NOT in object!
         
         Features:
@@ -271,7 +271,7 @@ class HardcoverClient:
         today = self._get_today_date()
         
         if read_result and read_result.get('user_book_reads') and len(read_result['user_book_reads']) > 0:
-            # Update existing read - MATCHES hardcover_api.lua line 539-571
+         
             existing_read = read_result['user_book_reads'][0]
             read_id = existing_read['id']
             
@@ -279,7 +279,7 @@ class HardcoverClient:
             started_at_val = existing_read.get('started_at')
             finished_at_val = existing_read.get('finished_at')
             
-            if not started_at_val:
+            if not started_at_val and page > 3:
                 started_at_val = today
                 logger.info(f"Hardcover: Setting started_at to {today}")
             
@@ -347,7 +347,7 @@ class HardcoverClient:
             """
             
             finished_at_val = today if is_finished else None
-            
+            started_at_val = today if page > 3 else None 
             result = self.query(query, {
                 "id": user_book_id, 
                 "pages": page, 
