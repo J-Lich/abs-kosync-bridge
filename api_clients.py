@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 class ABSClient:
     def __init__(self):
+        # Kept your variable names (ABS_SERVER / ABS_KEY)
         self.base_url = os.environ.get("ABS_SERVER", "").rstrip('/')
         self.token = os.environ.get("ABS_KEY")
         self.headers = {"Authorization": f"Bearer {self.token}"}
@@ -55,11 +56,13 @@ class ABSClient:
             if r.status_code == 200:
                 data = r.json()
                 files = []
-                for af in data.get('media', {}).get('audioFiles', []):
-                    ext = af.get('metadata', {}).get('ext') or 'mp3'
-                    if not ext.startswith('.'): ext = f".{ext}"
+                # UPDATED: Return simple list of URLs for the V6 transcriber
+                audio_files = data.get('media', {}).get('audioFiles', [])
+                audio_files.sort(key=lambda x: (x.get('disc', 0) or 0, x.get('track', 0) or 0))
+                
+                for af in audio_files:
                     stream_url = f"{self.base_url}/api/items/{item_id}/file/{af['ino']}?token={self.token}"
-                    files.append({"stream_url": stream_url, "ext": ext})
+                    files.append(stream_url)
                 return files
             return []
         except Exception as e:
@@ -94,25 +97,33 @@ class ABSClient:
             r = requests.get(url, headers=self.headers, timeout=10)
             if r.status_code != 200: return []
             data = r.json()
+            # Handle both direct list and wrapped dictionary response formats
             items = data if isinstance(data, list) else data.get('libraryItemsInProgress', [])
             active_items = []
             for item in items:
+                # Filter for audiobooks only
                 if item.get('mediaType') and item.get('mediaType') != 'audiobook': continue
+                
                 duration = item.get('duration', 0)
                 current_time = item.get('currentTime', 0)
                 if duration == 0 or item.get('isFinished'): continue
+                
                 pct = current_time / duration
                 if pct >= min_progress:
                     lib_item_id = item.get('libraryItemId') or item.get('itemId')
                     if not lib_item_id: continue
+                    
+                    # Quick detail fetch to get Title/Author
                     details = self.get_item_details(lib_item_id)
                     if not details: continue
                     metadata = details.get('media', {}).get('metadata', {})
+                    
                     active_items.append({
                         "id": lib_item_id,
                         "title": metadata.get('title', details.get('name', 'Unknown')),
                         "author": metadata.get('authorName'),
                         "progress": pct,
+                        "duration": duration,
                         "source": "ABS"
                     })
             return active_items
@@ -124,10 +135,10 @@ class KoSyncClient:
     def __init__(self):
         self.base_url = os.environ.get("KOSYNC_SERVER", "").rstrip('/')
         self.user = os.environ.get("KOSYNC_USER")
+        # Kept your MD5 hash logic
         self.auth_token = hashlib.md5(os.environ.get("KOSYNC_KEY", "").encode('utf-8')).hexdigest()
 
     def is_configured(self):
-        """Return True if KoSync is configured, False otherwise."""
         return bool(self.base_url and self.user)
 
     def check_connection(self):
@@ -140,6 +151,7 @@ class KoSyncClient:
             if r.status_code == 200:
                  logger.info(f"✅ Connected to KoSync Server at {self.base_url}")
                  return True
+            # Fallback check
             url_sync = f"{self.base_url}/syncs/progress/test-connection"
             headers = {"x-auth-user": self.user, "x-auth-key": self.auth_token}
             r = requests.get(url_sync, headers=headers, timeout=5)
@@ -150,27 +162,48 @@ class KoSyncClient:
             return False
 
     def get_progress(self, doc_id):
+        """
+        CRITICAL FIX: Returns TUPLE (percentage, xpath_string)
+        This prevents the 'cannot unpack non-iterable float' crash.
+        """
         headers = {"x-auth-user": self.user, "x-auth-key": self.auth_token, 'accept': 'application/vnd.koreader.v1+json'}
         url = f"{self.base_url}/syncs/progress/{doc_id}"
         try:
             r = requests.get(url, headers=headers)
-            if r.status_code == 200: return float(r.json().get('percentage', 0))
+            if r.status_code == 200: 
+                data = r.json()
+                pct = float(data.get('percentage', 0))
+                # Grab the raw progress string (XPath)
+                xpath = data.get('progress')
+                return pct, xpath
         except: pass
-        return 0.0
+        return 0.0, None
 
     def update_progress(self, doc_id, percentage, xpath=None):
-        if not self.is_configured():
-            return  # Silently skip if KoSync not configured
-        headers = {"x-auth-user": self.user, "x-auth-key": self.auth_token, 'accept': 'application/vnd.koreader.v1+json', 'content-type': 'application/json'}
+        if not self.is_configured(): return
+        
+        headers = {
+            "x-auth-user": self.user, 
+            "x-auth-key": self.auth_token, 
+            'accept': 'application/vnd.koreader.v1+json', 
+            'content-type': 'application/json'
+        }
         url = f"{self.base_url}/syncs/progress"
+        
+        # Use XPath if provided, otherwise format percentage
         progress_val = xpath if xpath else f"{percentage:.2%}"
+        
         payload = {
-            "document": doc_id, "percentage": percentage, "progress": progress_val, 
-            "device": "abs-sync-bot", "device_id": "abs-sync-bot", "timestamp": int(time.time())
+            "document": doc_id, 
+            "percentage": percentage, 
+            "progress": progress_val, 
+            "device": "abs-sync-bot", 
+            "device_id": "abs-sync-bot", 
+            "timestamp": int(time.time())
         }
         try:
             requests.put(url, headers=headers, json=payload)
-            logger.info(f"KoSync updated successfully")
+            logger.info(f"   📡 KoSync Updated: {percentage:.1%}")
         except Exception as e:
             logger.error(f"Failed to update KoSync: {e}")
 # [END FILE]
