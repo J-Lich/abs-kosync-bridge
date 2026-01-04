@@ -94,17 +94,39 @@ class SyncManager:
         if match:
              mapping.update({'hardcover_book_id': match['book_id'], 'hardcover_edition_id': match.get('edition_id'), 'hardcover_pages': match.get('pages')})
              self.db_handler.save(self.db)
-             self.hardcover_client.update_status(match['book_id'], 2, match.get('edition_id'))
+             # UPDATED: Set status to 1 (Want to Read) initially
+             self.hardcover_client.update_status(match['book_id'], 1, match.get('edition_id'))
+             logger.info(f"📚 Hardcover: Matched '{meta.get('title')}' -> Want to Read")
 
     def _sync_to_hardcover(self, mapping, percentage):
-        if not self.hardcover_client.token or not mapping.get('hardcover_book_id'): return
-        ub = self.hardcover_client.find_user_book(mapping['hardcover_book_id'])
+        # ... (previous code) ...
         if ub:
             total_pages = mapping.get('hardcover_pages') or 0
             page_num = int(total_pages * percentage)
             is_finished = percentage > 0.99
+            
+            # UPDATED CALL: Pass 'current_percentage=percentage'
+            self.hardcover_client.update_progress(
+                ub['id'], 
+                page_num, 
+                edition_id=mapping.get('hardcover_edition_id'), 
+                is_finished=is_finished, 
+                current_percentage=percentage
+            )
+            
+            # Update reading progress
             self.hardcover_client.update_progress(ub['id'], page_num, edition_id=mapping.get('hardcover_edition_id'), is_finished=is_finished)
-            if is_finished:
+            
+            # UPDATED: Handle Status Changes (Want to Read -> Reading -> Finished)
+            current_status = ub.get('status_id')
+
+            # If progress > 2% and currently "Want to Read" (1), switch to "Currently Reading" (2)
+            if percentage > 0.02 and current_status == 1:
+                self.hardcover_client.update_status(mapping['hardcover_book_id'], 2, mapping.get('hardcover_edition_id'))
+                logger.info(f"📚 Hardcover: Started '{mapping.get('abs_title', 'Unknown')}' (>2%)")
+
+            # If Finished, switch to "Read" (3)
+            if is_finished and current_status != 3:
                 self.hardcover_client.update_status(mapping['hardcover_book_id'], 3, mapping.get('hardcover_edition_id'))
                 logger.info(f"📚 Hardcover: Marked '{mapping.get('abs_title', 'Unknown')}' as finished")
 

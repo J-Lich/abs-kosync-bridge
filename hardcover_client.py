@@ -235,26 +235,10 @@ class HardcoverClient:
         """Get today's date in YYYY-MM-DD format for Hardcover API."""
         return date.today().isoformat()
     
-    def update_progress(self, user_book_id: int, page: int, edition_id: int = None, is_finished: bool = False) -> bool:
+    def update_progress(self, user_book_id: int, page: int, edition_id: int = None, is_finished: bool = False, current_percentage: float = 0.0) -> bool:
         """
-        Update reading progress with proper date handling.
-        
-      
-        started_at and finished_at are TOP-LEVEL variables, NOT in object!
-        
-        Features:
-        - Sets started_at to today when creating a new read (if not set)
-        - Sets finished_at to today when is_finished=True
-        - Updates progress_pages
-        
-        Args:
-            user_book_id: The Hardcover user_book ID
-            page: Current page number
-            edition_id: Optional edition ID for the specific format
-            is_finished: If True, sets finished_at date
-        
-        Returns:
-            True if successful, False otherwise
+        Update reading progress.
+        Uses current_percentage > 0.02 (2%) to decide when to set 'started_at'.
         """
         # First check if there's an existing read
         read_query = """
@@ -270,24 +254,27 @@ class HardcoverClient:
         read_result = self.query(read_query, {"userBookId": user_book_id})
         today = self._get_today_date()
         
+        # LOGIC: Only set started date if we are past 2%
+        should_start = current_percentage > 0.02
+
         if read_result and read_result.get('user_book_reads') and len(read_result['user_book_reads']) > 0:
-         
+            # --- UPDATE EXISTING READ ---
             existing_read = read_result['user_book_reads'][0]
             read_id = existing_read['id']
             
-            # FIX: Initialize with EXISTING values to prevent wiping dates with Null
+            # Preserve existing dates
             started_at_val = existing_read.get('started_at')
             finished_at_val = existing_read.get('finished_at')
             
-            if not started_at_val and page > 3:
+            # If no start date exists, and we passed 2%, set it to today
+            if not started_at_val and should_start:
                 started_at_val = today
-                logger.info(f"Hardcover: Setting started_at to {today}")
+                logger.info(f"Hardcover: Setting started_at to {today} (Progress: {current_percentage:.1%})")
             
             if is_finished and not finished_at_val:
                 finished_at_val = today
                 logger.info(f"Hardcover: Setting finished_at to {today}")
             
-            # 
             query = """
             mutation UpdateBookProgress($id: Int!, $pages: Int, $editionId: Int, $startedAt: date, $finishedAt: date) {
                 update_user_book_read(id: $id, object: {
@@ -297,13 +284,7 @@ class HardcoverClient:
                     finished_at: $finishedAt
                 }) {
                     error
-                    user_book_read {
-                        id
-                        started_at
-                        finished_at
-                        edition_id
-                        progress_pages
-                    }
+                    user_book_read { id }
                 }
             }
             """
@@ -317,15 +298,13 @@ class HardcoverClient:
             })
             
             if result and result.get('update_user_book_read'):
-                error = result['update_user_book_read'].get('error')
-                if error:
-                    logger.error(f"Hardcover update_user_book_read error: {error}")
+                if result['update_user_book_read'].get('error'):
                     return False
-                logger.debug(f"Hardcover: Updated read {read_id} -> page {page}")
                 return True
             return False
+
         else:
-         
+            # --- CREATE NEW READ ---
             query = """
             mutation InsertUserBookRead($id: Int!, $pages: Int, $editionId: Int, $startedAt: date, $finishedAt: date) {
                 insert_user_book_read(user_book_id: $id, user_book_read: {
@@ -335,33 +314,26 @@ class HardcoverClient:
                     finished_at: $finishedAt
                 }) {
                     error
-                    user_book_read {
-                        id
-                        started_at
-                        finished_at
-                        edition_id
-                        progress_pages
-                    }
+                    user_book_read { id }
                 }
             }
             """
             
+            # Apply logic to new reads too
+            started_at_val = today if should_start else None
             finished_at_val = today if is_finished else None
-            started_at_val = today if page > 3 else None 
+            
             result = self.query(query, {
                 "id": user_book_id, 
                 "pages": page, 
                 "editionId": edition_id,
-                "startedAt": today,
+                "startedAt": started_at_val, 
                 "finishedAt": finished_at_val
             })
             
             if result and result.get('insert_user_book_read'):
-                error = result['insert_user_book_read'].get('error')
-                if error:
-                    logger.error(f"Hardcover insert_user_book_read error: {error}")
+                if result['insert_user_book_read'].get('error'):
                     return False
-                logger.info(f"Hardcover: Created new read for user_book {user_book_id} (started: {today})")
                 return True
             return False
 # [END FILE]
