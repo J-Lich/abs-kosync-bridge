@@ -87,10 +87,26 @@ class SyncManager:
         if not self.hardcover_client.token: return
         item = self.abs_client.get_item_details(mapping['abs_id'])
         if not item: return
+
         meta = item.get('media', {}).get('metadata', {})
         match = None
-        if meta.get('isbn'): match = self.hardcover_client.search_by_isbn(meta.get('isbn'))
-        if not match and meta.get('title'): match = self.hardcover_client.search_by_title_author(meta.get('title'), meta.get('authorName'))
+
+        # Extract metadata fields for clarity
+        isbn = meta.get('isbn')
+        asin = meta.get('asin')
+        title = meta.get('title')
+        author = meta.get('authorName')
+
+
+        if isbn:
+            match = self.hardcover_client.search_by_isbn(isbn)
+        if not match and asin:
+            match = self.hardcover_client.search_by_isbn(asin)
+        if not match and title and author:
+            match = self.hardcover_client.search_by_title_author(title, author)
+        if not match and title:
+
+            match = self.hardcover_client.search_by_title_author(title, "")
         if match:
              mapping.update({'hardcover_book_id': match['book_id'], 'hardcover_edition_id': match.get('edition_id'), 'hardcover_pages': match.get('pages')})
              self.db_handler.save(self.db)
