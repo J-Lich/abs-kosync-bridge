@@ -156,9 +156,15 @@ class SyncManager:
         # 3. Now it is safe to check 'if ub:'
         if ub:
             total_pages = mapping.get('hardcover_pages') or 0
+
+            # SAFETY: If total_pages is zero we cannot compute a valid page number
+            if total_pages == 0:
+                logger.warning(f"⚠️ Hardcover Sync Skipped: {mapping.get('abs_title')} has 0 pages.")
+                return
+
             page_num = int(total_pages * percentage)
             is_finished = percentage > 0.99
-            
+
             # Update progress
             self.hardcover_client.update_progress(
                 ub['id'], 
@@ -167,7 +173,7 @@ class SyncManager:
                 is_finished=is_finished, 
                 current_percentage=percentage
             )
-            
+
             # Handle Status Changes
             current_status = ub.get('status_id')
 
@@ -323,6 +329,8 @@ class SyncManager:
                 return db
             
             self.db_handler.update(success_update)
+
+            self.db = self.db_handler.load()
             
             # Trigger Hardcover Match (using fresh DB data)
             final_db = self.db_handler.load()
@@ -350,6 +358,8 @@ class SyncManager:
                              m['status'] = 'failed_retry_later'
                 return db
             self.db_handler.update(fail_update)
+      
+            self.db = self.db_handler.load()
 
     def run_discovery(self):
         self.db = self.db_handler.load(default={"mappings": []})

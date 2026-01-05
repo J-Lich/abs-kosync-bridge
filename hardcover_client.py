@@ -74,28 +74,33 @@ class HardcoverClient:
     def get_user_book(self, book_id):
         """Fetch the user's specific entry (UserBook) for a generic book_id."""
         # FIX: Prevent crash if book_id is None
-        if not book_id: 
+        if not book_id:
+            return None
+
+        # Ensure we query for the current user as well as the book
+        user_id = self.get_user_id()
+        if not user_id:
             return None
 
         query = """
-        query GetUserBook($book_id: Int!) {
-            user_books(where: {book_id: {_eq: $book_id}}) {
+        query GetUserBook($book_id: Int!, $user_id: Int!) {
+            user_books(where: {book_id: {_eq: $book_id}, user_id: {_eq: $user_id}}) {
                 id
                 status_id
             }
         }
         """
         try:
-            response = self.query(query, {"book_id": int(book_id)})
-            
+            response = self.query(query, {"book_id": int(book_id), "user_id": int(user_id)})
+
             if response and 'user_books' in response:
                 books = response['user_books']
                 if books:
                     return books[0]
-                    
+
         except Exception as e:
             logger.error(f"Error fetching user book: {e}")
-            
+
         return None
 
     def search_by_isbn(self, isbn: str) -> Optional[Dict]:

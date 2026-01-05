@@ -8,11 +8,43 @@ Uses fcntl.flock() for advisory locking on Unix systems.
 """
 
 import json
-import fcntl
 import os
 import logging
 from pathlib import Path
 from contextlib import contextmanager
+
+# Cross-platform file locking: prefer fcntl (Unix); on Windows try msvcrt; otherwise no-op
+try:
+    import fcntl
+    _LOCK_EX = fcntl.LOCK_EX
+    _LOCK_SH = fcntl.LOCK_SH
+    _LOCK_UN = fcntl.LOCK_UN
+    def _flock(fd, operation):
+        return fcntl.flock(fd, operation)
+except ImportError:
+    try:
+        import msvcrt
+        _LOCK_EX = 1
+        _LOCK_SH = 2
+        _LOCK_UN = 3
+        def _flock(fd, operation):
+            # msvcrt.locking works with the file descriptor returned by file.fileno().
+            # Use a large length to lock the whole file; map unlock explicitly.
+            try:
+                if operation == _LOCK_UN:
+                    flag = msvcrt.LK_UNLCK
+                else:
+                    # No distinct shared lock in msvcrt; use exclusive as fallback
+                    flag = msvcrt.LK_LOCK
+                msvcrt.locking(fd, flag, 0x7fffffff)
+            except Exception:
+                # Best-effort; if locking fails, don't crash the app
+                return
+    except ImportError:
+        # No file locking capabilities available; use no-op placeholders
+        _LOCK_EX = _LOCK_SH = _LOCK_UN = 0
+        def _flock(fd, operation):
+            return
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +73,23 @@ class JsonDB:
         For reads: acquires shared lock (LOCK_SH) - multiple readers OK
         For writes: acquires exclusive lock (LOCK_EX) - single writer only
         """
-        lock_type = fcntl.LOCK_EX if 'w' in mode else fcntl.LOCK_SH
-        
+        lock_type = _LOCK_EX if 'w' in mode else _LOCK_SH
+
         # Create file if it doesn't exist (for write mode)
         if 'w' in mode and not self.filepath.exists():
             self.filepath.touch()
-        
+
         f = None
         try:
             f = open(self.filepath, mode)
-            fcntl.flock(f.fileno(), lock_type)
+            _flock(f.fileno(), lock_type)
             yield f
         finally:
             if f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                try:
+                    _flock(f.fileno(), _LOCK_UN)
+                except Exception:
+                    pass
                 f.close()
     
     def load(self, default=None):
@@ -116,14 +151,14 @@ class JsonDB:
         
         try:
             with open(self.filepath, 'r+') as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                _flock(f.fileno(), _LOCK_EX)
                 try:
                     content = f.read().strip()
                     data = json.loads(content) if content else default
-                    
+
                     # Apply the update function
                     data = update_func(data)
-                    
+
                     # Write back
                     f.seek(0)
                     f.truncate()
@@ -131,7 +166,10 @@ class JsonDB:
                     f.flush()
                     os.fsync(f.fileno())
                 finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    try:
+                        _flock(f.fileno(), _LOCK_UN)
+                    except Exception:
+                        pass
             return True
         except Exception as e:
             logger.error(f"Failed to update {self.filepath}: {e}")

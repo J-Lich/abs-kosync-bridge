@@ -257,27 +257,6 @@ class AudioTranscriber:
 
                     if not downloaded_files:
                         raise ValueError("No audio files were successfully downloaded and normalized")
-                    extension = audio_data.get('ext', '.mp3')
-                    if not extension.startswith('.'): extension = f".{extension}"
-                    local_path = book_cache_dir / f"part_{idx:03d}{extension}"
-                    
-                    logger.info(f"   Downloading Part {idx + 1}/{len(audio_urls)}...")
-                    with requests.get(stream_url, stream=True, timeout=300) as r:
-                        r.raise_for_status()
-                        with open(local_path, 'wb') as f:
-                            for chunk in r.iter_content(chunk_size=8192):
-                                f.write(chunk)
-
-                    if not local_path.exists() or local_path.stat().st_size == 0:
-                        raise ValueError(f"File {local_path} is empty or missing.")
-
-                    # Normalize to WAV
-                    normalized_path = self.normalize_audio_to_wav(local_path)
-                    if not normalized_path:
-                        raise ValueError(f"Normalization failed for part {idx+1}")
-                    
-                    # Split if needed
-                    downloaded_files.extend(self.split_audio_file(normalized_path, MAX_DURATION_SECONDS))
 
                 if not downloaded_files:
                     raise ValueError("No audio files were successfully downloaded and normalized")

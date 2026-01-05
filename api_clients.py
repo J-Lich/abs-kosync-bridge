@@ -56,13 +56,17 @@ class ABSClient:
             if r.status_code == 200:
                 data = r.json()
                 files = []
-                # UPDATED: Return simple list of URLs for the V6 transcriber
+                # Return list of dicts with stream_url and ext (for transcriber)
                 audio_files = data.get('media', {}).get('audioFiles', [])
                 audio_files.sort(key=lambda x: (x.get('disc', 0) or 0, x.get('track', 0) or 0))
                 
                 for af in audio_files:
                     stream_url = f"{self.base_url}/api/items/{item_id}/file/{af['ino']}?token={self.token}"
-                    files.append(stream_url)
+                    # Return dict with stream URL and extension (default to mp3)
+                    files.append({
+                        "stream_url": stream_url,
+                        "ext": af.get("ext", "mp3")
+                    })
                 return files
             return []
         except Exception as e:
