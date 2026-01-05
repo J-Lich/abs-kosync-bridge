@@ -16,10 +16,19 @@ from booklore_client import BookloreClient
 from ebook_utils import EbookParser
 from suggestion_manager import SuggestionManager
 
+# FIX: Safer import logic that doesn't crash immediately
+StorytellerClientClass = None
 try:
-    from storyteller_api import StorytellerDBWithAPI as StorytellerClient
+    from storyteller_api import StorytellerDBWithAPI
+    StorytellerClientClass = StorytellerDBWithAPI
 except ImportError:
-    from storyteller_db import StorytellerDB as StorytellerClient
+    pass
+
+if not StorytellerClientClass:
+    try:
+        from storyteller_db import StorytellerDB as StorytellerClientClass
+    except ImportError:
+        StorytellerClientClass = None
 
 logging.basicConfig(
     level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO').upper(), logging.INFO),
@@ -38,7 +47,20 @@ class SyncManager:
         self.abs_client = ABSClient()
         self.kosync_client = KoSyncClient()
         self.hardcover_client = HardcoverClient()
-        self.storyteller_db = StorytellerClient()
+        # FIX: Wrap instantiation in try/except to prevent crash on init failure
+        try:
+            if StorytellerClientClass:
+                self.storyteller_db = StorytellerClientClass()
+            else:
+                raise ImportError("No Storyteller client available")
+        except Exception as e:
+            logger.error(f"⚠️ Failed to init Storyteller client: {e}. Storyteller sync will be DISABLED.")
+            # Minimal dummy class to prevent crashes in the rest of the app
+            class DummyST:
+                def check_connection(self): return False
+                def get_progress_with_fragment(self, *args): return None, None, None, None
+                def update_progress(self, *args): return False
+            self.storyteller_db = DummyST()
         self.booklore_client = BookloreClient()
         self._transcriber = None
         self.epub_cache_dir = DATA_DIR / "epub_cache"
@@ -208,74 +230,126 @@ class SyncManager:
         return None
 
     def check_pending_jobs(self):
+        """
+        Check for pending jobs and run them in a BACKGROUND thread
+        so we don't block the sync cycle.
+        """
+        # 1. If a job is already running, let it finish.
+        if self._job_thread and self._job_thread.is_alive():
+            return
+
+        # 2. Find ONE pending job to start
+        # Reload DB to ensure we have fresh status
         self.db = self.db_handler.load(default={"mappings": []})
-        max_retries = int(os.getenv("JOB_MAX_RETRIES", 5))
-        retry_delay_mins = int(os.getenv("JOB_RETRY_DELAY_MINS", 15))
-
+        target_mapping = None
+        
+        # Check for 'pending' jobs (prioritize them)
         for mapping in self.db.get('mappings', []):
-            status = mapping.get('status')
+            if mapping.get('status') == 'pending':
+                target_mapping = mapping
+                break
+        
+        # If no pending jobs, check for retries
+        if not target_mapping:
+            max_retries = int(os.getenv("JOB_MAX_RETRIES", 5))
+            retry_delay_mins = int(os.getenv("JOB_RETRY_DELAY_MINS", 15))
+            
+            for mapping in self.db.get('mappings', []):
+                if mapping.get('status') == 'failed_retry_later':
+                    last_attempt = mapping.get('last_attempt', 0)
+                    retry_count = mapping.get('retry_count', 0)
+                    
+                    if retry_count >= max_retries:
+                        continue # Skip permanent failures
+                        
+                    if time.time() - last_attempt > retry_delay_mins * 60:
+                        target_mapping = mapping
+                        logger.info(f"[JOB] Retrying ({retry_count + 1}/{max_retries}): {mapping.get('abs_title')}")
+                        break
 
-            # Skip if not pending or failed
-            if status not in ('pending', 'failed_retry_later'):
-                continue
+        if not target_mapping:
+            return
 
-            # For failed jobs, check retry conditions
-            if status == 'failed_retry_later':
-                retry_count = mapping.get('retry_count', 0)
-                last_attempt = mapping.get('last_attempt', 0)
+        # 3. Mark as 'processing' immediately so we don't pick it up again
+        logger.info(f"[JOB] Starting background transcription: {target_mapping.get('abs_title')}")
+        
+        # Atomic update to mark processing
+        def set_processing(db):
+            for m in db.get('mappings', []):
+                if m['abs_id'] == target_mapping['abs_id']:
+                    m['status'] = 'processing'
+                    m['last_attempt'] = time.time()
+            return db
+        self.db_handler.update(set_processing)
 
-                # Check max retries
-                if retry_count >= max_retries:
-                    if mapping.get('status') != 'failed_permanent':
-                        logger.warning(f"[JOB] {mapping.get('abs_title')}: Max retries ({max_retries}) exceeded, marking as permanently failed")
-                        mapping['status'] = 'failed_permanent'
-                        self.db_handler.save(self.db)
-                    continue
+        # 4. Launch the heavy work in a separate thread
+        self._job_thread = threading.Thread(
+            target=self._run_background_job, 
+            args=(target_mapping,),
+            daemon=True
+        )
+        self._job_thread.start()
 
-                # Check retry delay
-                time_since_last = time.time() - last_attempt
-                if time_since_last < retry_delay_mins * 60:
-                    continue  # Not time to retry yet
+    def _run_background_job(self, mapping_data):
+        """
+        Threaded worker that handles transcription without blocking the main loop.
+        """
+        abs_id = mapping_data['abs_id']
+        abs_title = mapping_data.get('abs_title', 'Unknown')
+        ebook_filename = mapping_data['ebook_filename']
+        max_retries = int(os.getenv("JOB_MAX_RETRIES", 5))
 
-                logger.info(f"[JOB] Retrying ({retry_count + 1}/{max_retries}): {mapping.get('abs_title')}")
-            else:
-                logger.info(f"[JOB] Starting: {mapping.get('abs_title')}")
+        try:
+            # --- Heavy Lifting (Blocks this thread, but not the Main thread) ---
+            # Step 1: Get EPUB file
+            epub_path = self._get_local_epub(ebook_filename)
+            if not epub_path:
+                raise FileNotFoundError(f"Could not locate or download: {ebook_filename}")
 
-            mapping['status'] = 'processing'
-            mapping['last_attempt'] = time.time()
-            self.db_handler.save(self.db)
+            # Step 2: Download and transcribe audio
+            audio_files = self.abs_client.get_audio_files(abs_id)
+            transcript_path = self.transcriber.process_audio(abs_id, audio_files)
 
-            try:
-                # Step 1: Get EPUB file (filesystem, cache, or Booklore download)
-                epub_path = self._get_local_epub(mapping['ebook_filename'])
-                if not epub_path:
-                    raise FileNotFoundError(f"Could not locate or download: {mapping['ebook_filename']}")
+            # Step 3: Parse EPUB
+            self.ebook_parser.extract_text_and_map(epub_path)
+            
+            # --- Atomic Success Update ---
+            def success_update(db):
+                for m in db.get('mappings', []):
+                    if m['abs_id'] == abs_id:
+                        m['transcript_file'] = str(transcript_path)
+                        m['status'] = 'active'
+                        m['retry_count'] = 0
+                return db
+            
+            self.db_handler.update(success_update)
+            
+            # Trigger Hardcover Match (using fresh DB data)
+            final_db = self.db_handler.load()
+            final_mapping = next((m for m in final_db.get('mappings', []) if m['abs_id'] == abs_id), None)
+            if final_mapping:
+                self._automatch_hardcover(final_mapping)
+            
+            logger.info(f"[JOB] Completed: {abs_title}")
 
-                # Step 2: Download and transcribe audio
-                audio_files = self.abs_client.get_audio_files(mapping['abs_id'])
-                transcript_path = self.transcriber.process_audio(mapping['abs_id'], audio_files)
-
-                # Step 3: Parse EPUB for text mapping (validates EPUB is readable)
-                self.ebook_parser.extract_text_and_map(epub_path)
-
-                # Step 4: Mark as active and clear retry tracking
-                mapping.update({
-                    'transcript_file': str(transcript_path),
-                    'status': 'active',
-                    'retry_count': 0,
-                    'last_attempt': 0
-                })
-                self.db_handler.save(self.db)
-                self._automatch_hardcover(mapping)
-                logger.info(f"[SUCCESS] {mapping.get('abs_title')} is now active")
-
-            except Exception as e:
-                retry_count = mapping.get('retry_count', 0) + 1
-                logger.error(f"[FAIL] {mapping.get('abs_title')} (attempt {retry_count}/{max_retries}): {e}")
-                mapping['status'] = 'failed_retry_later'
-                mapping['retry_count'] = retry_count
-                mapping['last_error'] = str(e)
-                self.db_handler.save(self.db)
+        except Exception as e:
+            logger.error(f"[FAIL] {abs_title}: {e}")
+            # Atomic Failure Update
+            def fail_update(db):
+                for m in db.get('mappings', []):
+                    if m['abs_id'] == abs_id:
+                        # Increment retry count
+                        curr_retries = m.get('retry_count', 0) + 1
+                        m['retry_count'] = curr_retries
+                        m['last_error'] = str(e)
+                        
+                        if curr_retries >= max_retries:
+                             m['status'] = 'failed_permanent'
+                             logger.warning(f"[JOB] {abs_title}: Max retries exceeded")
+                        else:
+                             m['status'] = 'failed_retry_later'
+                return db
+            self.db_handler.update(fail_update)
 
     def run_discovery(self):
         self.db = self.db_handler.load(default={"mappings": []})

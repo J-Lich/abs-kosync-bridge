@@ -82,7 +82,7 @@ class StorytellerDB:
                 
                 # 10s leapfrog logic
                 current_ts = pos_row['timestamp'] if pos_row else 0
-                new_ts = max(int(time.time() * 1000), current_ts) + 10000
+                new_ts = max(int(time.time() * 1000), current_ts)
                 
                 locator = {}
                 if pos_row and pos_row['locator']: 
@@ -149,7 +149,7 @@ class StorytellerDB:
                 if not row: return False
                 uuid = row['uuid']
                 
-                new_ts = int(time.time() * 1000) + 60000 # 60s leap
+                new_ts = int(time.time() * 1000)
                 locator = {
                     "type": "application/xhtml+xml",
                     "locations": {"totalProgression": float(percentage)}

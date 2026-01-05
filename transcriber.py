@@ -216,14 +216,47 @@ class AudioTranscriber:
                     resuming = False
 
             # Phase 1: Download and Normalize (if not resuming)
+            # Phase 1: Download and Normalize (if not resuming)
             if not resuming:
-                if book_cache_dir.exists(): shutil.rmtree(book_cache_dir)
-                book_cache_dir.mkdir(parents=True, exist_ok=True)
-                downloaded_files = []
+                # FIX: Check if files exist from a previous run before wiping
+                existing_files = sorted(book_cache_dir.glob("part_*_split_*.wav"))
+                
+                if existing_files:
+                    logger.info(f"♻️ Found {len(existing_files)} existing split files. Skipping download phase.")
+                    downloaded_files = list(existing_files)
+                else:
+                    # Original logic: Wipe and Start Fresh
+                    if book_cache_dir.exists(): shutil.rmtree(book_cache_dir)
+                    book_cache_dir.mkdir(parents=True, exist_ok=True)
+                    downloaded_files = []
 
-                logger.info(f"📥 Phase 1: Downloading {len(audio_urls)} audio files...")
-                for idx, audio_data in enumerate(audio_urls):
-                    stream_url = audio_data['stream_url']
+                    logger.info(f"📥 Phase 1: Downloading {len(audio_urls)} audio files...")
+                    for idx, audio_data in enumerate(audio_urls):
+                        stream_url = audio_data['stream_url']
+                        extension = audio_data.get('ext', '.mp3')
+                        if not extension.startswith('.'): extension = f".{extension}"
+                        local_path = book_cache_dir / f"part_{idx:03d}{extension}"
+                        
+                        logger.info(f"   Downloading Part {idx + 1}/{len(audio_urls)}...")
+                        with requests.get(stream_url, stream=True, timeout=300) as r:
+                            r.raise_for_status()
+                            with open(local_path, 'wb') as f:
+                                for chunk in r.iter_content(chunk_size=8192):
+                                    f.write(chunk)
+
+                        if not local_path.exists() or local_path.stat().st_size == 0:
+                            raise ValueError(f"File {local_path} is empty or missing.")
+
+                        # Normalize to WAV
+                        normalized_path = self.normalize_audio_to_wav(local_path)
+                        if not normalized_path:
+                            raise ValueError(f"Normalization failed for part {idx+1}")
+                        
+                        # Split if needed
+                        downloaded_files.extend(self.split_audio_file(normalized_path, MAX_DURATION_SECONDS))
+
+                    if not downloaded_files:
+                        raise ValueError("No audio files were successfully downloaded and normalized")
                     extension = audio_data.get('ext', '.mp3')
                     if not extension.startswith('.'): extension = f".{extension}"
                     local_path = book_cache_dir / f"part_{idx:03d}{extension}"

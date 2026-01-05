@@ -93,6 +93,29 @@ class EbookParser:
             logger.error(f"Error computing hash for {filepath}: {e}")
             return None
 
+    def _compute_koreader_hash_from_bytes(self, content):
+        """Compute KOReader hash from bytes (standard KOReader algorithm)."""
+        md5 = hashlib.md5()
+        try:
+            file_size = len(content)
+            for i in range(-1, 11):
+                offset = 0 if i == -1 else 1024 * (4 ** i)
+                if offset >= file_size: break
+            
+                chunk = content[offset:offset + 1024]
+                if not chunk: break
+                md5.update(chunk)
+            return md5.hexdigest()
+        except Exception as e:
+            logger.error(f"Error computing KOReader hash from bytes: {e}")
+            return None
+
+    def get_kosync_id_from_bytes(self, filename, content):
+        """Compute KOSync ID from filename and file content bytes."""
+        if self.hash_method == "filename":
+            return hashlib.md5(filename.encode('utf-8')).hexdigest()
+        return self._compute_koreader_hash_from_bytes(content)
+
     def extract_text_and_map(self, filepath):
         filepath = Path(filepath)
         if not filepath.exists():
@@ -169,16 +192,39 @@ class EbookParser:
                 logger.warning(f"Found chapter {href} but no element with id='{clean_id}'")
                 return None
 
-            elem_text = element.get_text(separator=' ', strip=True)
-            if not elem_text:
+            # Calculate exact offset by iterating text nodes
+            current_offset = 0
+            found_offset = -1
+            
+            # Iterate over all text nodes in the document order
+            all_strings = soup.find_all(string=True)
+            
+            for s in all_strings:
+                # Check if this string is inside our target element (or is the element itself)
+                if s.parent == element or element in s.parents:
+                    found_offset = current_offset
+                    break
+                
+                # Add length of this string to offset, accounting for the separator used in get_text
+                # Note: BeautifulSoup's get_text(separator=' ') adds spaces between blocks, 
+                # but raw strings in find_all don't include that. 
+                # Ideally, we count the length of the string plus a simplified whitespace assumption.
+                text_len = len(s)
+                # Heuristic: Block-level elements usually imply a space/newline in get_text(' ')
+                # For safety/simplicity in this context, we accumulate raw string lengths 
+                # This is an estimation but more accurate for location than .find() on common words.
+                current_offset += text_len
+
+            if found_offset == -1:
+                # Fallback if traversal failed
+                elem_text = element.get_text(separator=' ', strip=True)
+                chapter_text = soup.get_text(separator=' ', strip=True)
+                found_offset = chapter_text.find(elem_text)
+            
+            if found_offset == -1:
                 return None
 
-            chapter_text = BeautifulSoup(target_item['content'], 'html.parser').get_text(separator=' ', strip=True)
-            local_offset = chapter_text.find(elem_text)
-            if local_offset == -1:
-                return None
-
-            global_offset = target_item['start'] + local_offset
+            global_offset = target_item['start'] + found_offset
 
             snippet_len = 500
             start = max(0, global_offset)

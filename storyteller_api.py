@@ -139,7 +139,7 @@ class StorytellerAPIClient:
         return None, None, None, None
     
     def update_position(self, book_uuid: str, percentage: float, rich_locator: dict = None) -> bool:
-        new_ts = int(time.time() * 1000) + 10000
+        new_ts = int(time.time() * 1000)
         payload = {
             "timestamp": new_ts,
             "locator": {

@@ -73,6 +73,10 @@ class HardcoverClient:
 
     def get_user_book(self, book_id):
         """Fetch the user's specific entry (UserBook) for a generic book_id."""
+        # FIX: Prevent crash if book_id is None
+        if not book_id: 
+            return None
+
         query = """
         query GetUserBook($book_id: Int!) {
             user_books(where: {book_id: {_eq: $book_id}}) {
