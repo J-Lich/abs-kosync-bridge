@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.FORK_REPOSITORY }}
-          ref: release-candidate
+          ref: Release-candidate
           fetch-depth: 1
 
       # 2. Tagging Strategy for Branch Builds
