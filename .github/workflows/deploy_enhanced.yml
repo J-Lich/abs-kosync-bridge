@@ -35,14 +35,14 @@ jobs:
             ${{ env.DOCKERHUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}
             ghcr.io/${{ github.repository }}
           tags: |
-            # Fixed tag for the branch
-            type=raw,value=release-candidate
+            # Fixed tag for the branch to be enhanced verision
+            type=raw,value=version
             # Date-based tag to keep history (e.g., release-candidate-20240101)
             type=schedule,pattern=release-candidate-{{date 'YYYYMMDD'}}
             # Use SHA for precise tracking
             type=sha
             # Uncomment below if you want this branch to overwrite 'latest'
-            # type=raw,value=latest
+            type=raw,value=latest
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
