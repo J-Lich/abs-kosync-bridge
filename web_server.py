@@ -1,5 +1,5 @@
 # [START FILE: abs-kosync-enhanced/web_server.py]
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash
 import logging
 from pathlib import Path
 from main import SyncManager
@@ -482,7 +482,8 @@ def index():
         'audiobookshelf': True,
         'kosync': manager.kosync_client.is_configured(),
         'storyteller': manager.storyteller_db.check_connection() if hasattr(manager.storyteller_db, 'check_connection') else True,
-        'booklore': manager.booklore_client.check_connection() if hasattr(manager.booklore_client, 'check_connection') else False
+        'booklore': manager.booklore_client.check_connection() if hasattr(manager.booklore_client, 'check_connection') else False,
+        'hardcover': bool(manager.hardcover_client.token)
     }
 
     mappings = db.get('mappings', [])
@@ -899,6 +900,41 @@ def clear_progress(abs_id):
     except Exception as e:
         logger.error(f"Failed to clear progress for {abs_id}: {e}")
     
+    return redirect(url_for('index'))
+
+@app.route('/link-hardcover/<abs_id>', methods=['POST'])
+def link_hardcover(abs_id):
+    from flask import flash
+    url = request.form.get('hardcover_url', '').strip()
+    if not url:
+        return redirect(url_for('index'))
+
+    # Resolve book
+    book_data = manager.hardcover_client.resolve_book_from_input(url)
+    if not book_data:
+        flash(f"❌ Could not find book for: {url}", "error")
+        return redirect(url_for('index'))
+
+    # Update DB
+    def update_map(db):
+        for m in db.get('mappings', []):
+            if m.get('abs_id') == abs_id:
+                m['hardcover_book_id'] = book_data['book_id']
+                m['hardcover_edition_id'] = book_data.get('edition_id')
+                m['hardcover_pages'] = book_data.get('pages')
+                m['hardcover_title'] = book_data.get('title')
+        return db
+
+    if db_handler.update(update_map):
+        # Force status to 'Want to Read' (1)
+        try:
+            manager.hardcover_client.update_status(book_data['book_id'], 1, book_data.get('edition_id'))
+        except Exception as e:
+            logger.warning(f"Failed to set Hardcover status: {e}")
+        flash(f"✅ Linked Hardcover: {book_data.get('title')}", "success")
+    else:
+        flash("❌ Database update failed", "error")
+
     return redirect(url_for('index'))
 
 @app.route('/api/status')

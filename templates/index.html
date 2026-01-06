@@ -503,6 +503,17 @@
     </div>
     
     <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <div class="flash-messages" style="margin-bottom:16px;">
+              {% for category, msg in messages %}
+                <div class="flash flash-{{ category }}" style="padding:12px;border-radius:8px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.04);">
+                  {{ msg }}
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
         {% if mappings %}
         <div class="controls-bar">
             <div class="control-group">
@@ -578,6 +589,24 @@
                                 <span>{{ '%.1f' | format(mapping.booklore_progress) }}%</span>
                             </div>
                             {% endif %}
+
+                            {% if integrations.hardcover %}
+    <div class="progress-item" 
+         title="Hardcover: {% if mapping.hardcover_title %}{{ mapping.hardcover_title }}{% else %}Not Linked{% endif %} (Click to Edit)"
+         onclick="linkHardcover(event, '{{ mapping.abs_id }}', '{{ mapping.hardcover_title|default('')|escape }}')"
+         style="cursor: pointer; position: relative;">
+        <img src="/static/hardcover.png" alt="HC" 
+             style="width: 14px; height: 14px; {% if not mapping.hardcover_book_id %}opacity: 0.4; filter: grayscale(100%);{% endif %}"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';">
+        <span style="display:none; font-size: 12px; {% if not mapping.hardcover_book_id %}opacity: 0.5;{% endif %}">📚</span>
+
+        {% if mapping.hardcover_book_id %}
+            <span>{{ '%.0f' | format(mapping.hardcover_progress|default(0)) }}%</span>
+        {% else %}
+            <span style="font-size: 10px; opacity: 0.5;">+</span>
+        {% endif %}
+    </div>
+    {% endif %}
                         </div>
 
                         <div class="progress-bar-mini">
@@ -668,6 +697,24 @@
                                 <span>{{ '%.1f' | format(mapping.booklore_progress) }}%</span>
                             </div>
                             {% endif %}
+
+                            {% if integrations.hardcover %}
+    <div class="progress-item" 
+         title="Hardcover: {% if mapping.hardcover_title %}{{ mapping.hardcover_title }}{% else %}Not Linked{% endif %} (Click to Edit)"
+         onclick="linkHardcover(event, '{{ mapping.abs_id }}', '{{ mapping.hardcover_title|default('')|escape }}')"
+         style="cursor: pointer; position: relative;">
+        <img src="/static/hardcover.png" alt="HC" 
+             style="width: 14px; height: 14px; {% if not mapping.hardcover_book_id %}opacity: 0.4; filter: grayscale(100%);{% endif %}"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';">
+        <span style="display:none; font-size: 12px; {% if not mapping.hardcover_book_id %}opacity: 0.5;{% endif %}">📚</span>
+
+        {% if mapping.hardcover_book_id %}
+            <span>{{ '%.0f' | format(mapping.hardcover_progress|default(0)) }}%</span>
+        {% else %}
+            <span style="font-size: 10px; opacity: 0.5;">+</span>
+        {% endif %}
+    </div>
+    {% endif %}
                         </div>
 
                         <div class="progress-bar-mini">
@@ -712,6 +759,27 @@
         const allBooksGrid = document.getElementById('all-books-grid');
         const sortSelect = document.getElementById('sort-select');
         const directionBtn = document.getElementById('sort-direction');
+
+        function linkHardcover(event, absId, currentTitle) {
+            event.stopPropagation();
+            let promptText = "Enter Hardcover URL or ID:";
+            if (currentTitle) {
+                promptText = `Current: ${currentTitle}\n\nEnter new Hardcover URL or ID to replace it:`;
+            }
+            const input = prompt(promptText);
+            if (input) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = `/link-hardcover/${absId}`;
+                const inputField = document.createElement('input');
+                inputField.type = 'hidden';
+                inputField.name = 'hardcover_url';
+                inputField.value = input;
+                form.appendChild(inputField);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
 
         // Initial Sort Defaults
         let sortState = {

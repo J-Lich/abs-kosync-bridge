@@ -200,6 +200,96 @@ class HardcoverClient:
         
         return None
     
+    def resolve_book_from_input(self, input_str: str) -> Optional[Dict]:
+        """
+        Resolve a Hardcover book from a URL, numeric ID, or slug.
+        Returns dict: { 'book_id', 'edition_id', 'pages', 'title' } or None.
+        """
+        if not input_str:
+            return None
+
+        from urllib.parse import urlparse
+
+        s = input_str.strip()
+        # If it's a URL, try to extract the last segment of the path
+        try:
+            parsed = urlparse(s)
+            if parsed.scheme and parsed.netloc and parsed.path:
+                path = parsed.path.rstrip('/')
+                if '/' in path:
+                    s = path.split('/')[-1]
+                else:
+                    s = path
+        except Exception:
+            pass
+
+        # If it looks numeric, treat as book ID
+        book = None
+        if s.isdigit():
+            try:
+                book_id = int(s)
+                query = """
+                query ($id: Int!) {
+                    books_by_pk(id: $id) {
+                        id
+                        title
+                        default_ebook_edition {
+                            id
+                            pages
+                        }
+                        default_physical_edition {
+                            id
+                            pages
+                        }
+                    }
+                }
+                """
+                result = self.query(query, {"id": book_id})
+                if result and result.get('books_by_pk'):
+                    book = result['books_by_pk']
+                else:
+                    return None
+            except Exception as e:
+                logger.error(f"resolve_book_from_input error (id): {e}")
+                return None
+        else:
+            # Treat as slug
+            slug = s
+            query = """
+            query ($slug: String!) {
+                books(where: { slug: { _eq: $slug }}, limit: 1) {
+                    id
+                    title
+                    default_ebook_edition {
+                        id
+                        pages
+                    }
+                    default_physical_edition {
+                        id
+                        pages
+                    }
+                }
+            }
+            """
+            result = self.query(query, {"slug": slug})
+            if result and result.get('books') and len(result['books']) > 0:
+                book = result['books'][0]
+            else:
+                return None
+
+        edition = None
+        if book.get('default_ebook_edition'):
+            edition = book['default_ebook_edition']
+        elif book.get('default_physical_edition'):
+            edition = book['default_physical_edition']
+
+        return {
+            'book_id': book.get('id'),
+            'edition_id': edition.get('id') if edition else None,
+            'pages': edition.get('pages') if edition else None,
+            'title': book.get('title')
+        }
+
     def find_user_book(self, book_id: int) -> Optional[Dict]:
         """Find existing user_book with read info."""
         query = """
