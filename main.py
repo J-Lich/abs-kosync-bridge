@@ -82,6 +82,7 @@ class SyncManager:
 
         self.delta_abs_thresh = float(os.getenv("SYNC_DELTA_ABS_SECONDS", 60))
         self.delta_kosync_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_PERCENT", 1)) / 100.0
+        self.abs_progress_offset = float(os.getenv("ABS_PROGRESS_OFFSET_SECONDS", 0))
         self.startup_checks()
         self.cleanup_stale_jobs()
 
@@ -193,6 +194,15 @@ class SyncManager:
                 is_finished=is_finished, 
                 current_percentage=percentage
             )
+
+    def _update_abs_progress_with_offset(self, abs_id, ts):
+        """Apply offset to timestamp and update ABS progress."""
+        adjusted_ts = round(ts + self.abs_progress_offset, 2)
+        if self.abs_progress_offset != 0:
+            logger.debug(f"   📐 Adjusted timestamp: {ts}s → {adjusted_ts}s (offset: {self.abs_progress_offset:+.1f}s)")
+        abs_ok = self.abs_client.update_progress(abs_id, adjusted_ts)
+        if abs_ok: logger.info("✅ ABS update successful")
+        return abs_ok
 
     def _abs_to_percentage(self, abs_seconds, transcript_path):
         try:
@@ -525,8 +535,7 @@ class SyncManager:
                     if txt:
                         ts = self.transcriber.find_time_for_text(mapping.get('transcript_file'), txt, hint_percentage=ko_pct)
                         if ts:
-                            abs_ok = self.abs_client.update_progress(abs_id, ts)
-                            if abs_ok: logger.info("✅ ABS update successful")
+                            abs_ok = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=ko_pct)
                             if match_pct:
                                 st_ok = self.storyteller_db.update_progress(epub, match_pct, rich_locator)
@@ -550,8 +559,7 @@ class SyncManager:
                     if txt:
                         ts = self.transcriber.find_time_for_text(mapping.get('transcript_file'), txt, hint_percentage=st_pct)
                         if ts:
-                            abs_ok = self.abs_client.update_progress(abs_id, ts)
-                            if abs_ok: logger.info("✅ ABS update successful")
+                            abs_ok = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=st_pct)
                             if match_pct:
                                 ko_ok = self.kosync_client.update_progress(ko_id, match_pct, None)
@@ -573,8 +581,7 @@ class SyncManager:
                     if txt:
                         ts = self.transcriber.find_time_for_text(mapping.get('transcript_file'), txt, hint_percentage=bl_pct)
                         if ts:
-                            abs_ok = self.abs_client.update_progress(abs_id, ts)
-                            if abs_ok: logger.info("✅ ABS update successful")
+                            abs_ok = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=bl_pct)
                             if match_pct:
                                 ko_ok = self.kosync_client.update_progress(ko_id, match_pct, None)
