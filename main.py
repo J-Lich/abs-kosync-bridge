@@ -202,7 +202,7 @@ class SyncManager:
             logger.debug(f"   📐 Adjusted timestamp: {ts}s → {adjusted_ts}s (offset: {self.abs_progress_offset:+.1f}s)")
         abs_ok = self.abs_client.update_progress(abs_id, adjusted_ts)
         if abs_ok: logger.info("✅ ABS update successful")
-        return abs_ok
+        return abs_ok, adjusted_ts
 
     def _abs_to_percentage(self, abs_seconds, transcript_path):
         try:
@@ -535,7 +535,7 @@ class SyncManager:
                     if txt:
                         ts = self.transcriber.find_time_for_text(mapping.get('transcript_file'), txt, hint_percentage=ko_pct)
                         if ts:
-                            abs_ok = self._update_abs_progress_with_offset(abs_id, ts)
+                            abs_ok, final_ts = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=ko_pct)
                             if match_pct:
                                 st_ok = self.storyteller_db.update_progress(epub, match_pct, rich_locator)
@@ -549,7 +549,6 @@ class SyncManager:
                                 if st_ok: logger.info("✅ Storyteller update successful")
                                 if bl_ok: logger.info("✅ Booklore update successful")
                                 final_pct = ko_pct
-                            final_ts = ts
                             sync_success = True
 
                 elif leader == 'STORYTELLER':
@@ -559,7 +558,7 @@ class SyncManager:
                     if txt:
                         ts = self.transcriber.find_time_for_text(mapping.get('transcript_file'), txt, hint_percentage=st_pct)
                         if ts:
-                            abs_ok = self._update_abs_progress_with_offset(abs_id, ts)
+                            abs_ok, final_ts = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=st_pct)
                             if match_pct:
                                 ko_ok = self.kosync_client.update_progress(ko_id, match_pct, None)
@@ -573,7 +572,6 @@ class SyncManager:
                                 if ko_ok: logger.info("✅ KoSync update successful")
                                 if bl_ok: logger.info("✅ Booklore update successful")
                                 final_pct = st_pct
-                            final_ts = ts
                             sync_success = True
 
                 elif leader == 'BOOKLORE':
@@ -581,7 +579,7 @@ class SyncManager:
                     if txt:
                         ts = self.transcriber.find_time_for_text(mapping.get('transcript_file'), txt, hint_percentage=bl_pct)
                         if ts:
-                            abs_ok = self._update_abs_progress_with_offset(abs_id, ts)
+                            abs_ok, final_ts = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=bl_pct)
                             if match_pct:
                                 ko_ok = self.kosync_client.update_progress(ko_id, match_pct, None)
@@ -595,7 +593,6 @@ class SyncManager:
                                 if ko_ok: logger.info("✅ KoSync update successful")
                                 if st_ok: logger.info("✅ Storyteller update successful")
                                 final_pct = bl_pct
-                            final_ts = ts
                             sync_success = True
 
                 if sync_success and final_pct > 0.01:
