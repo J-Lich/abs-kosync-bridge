@@ -59,7 +59,8 @@ class EbookParser:
         self.cache = LRUCache(capacity=cache_size)
         self.fuzzy_threshold = int(os.getenv("FUZZY_MATCH_THRESHOLD", 80))
         self.hash_method = os.getenv("KOSYNC_HASH_METHOD", "content").lower()
-        logger.info(f"EbookParser initialized (cache={cache_size}, hash={self.hash_method})")
+        self.useXpathSegmentFallback = os.getenv("XPATH_FALLBACK_TO_PREVIOUS_SEGMENT", "false").lower() == "true"
+        logger.info(f"EbookParser initialized (cache={cache_size}, hash={self.hash_method}, xpath_fallback={self.useXpathSegmentFallback})")
 
     def _resolve_book_path(self, filename):
         # 1. First, search in books_dir (filesystem mount)
@@ -529,8 +530,8 @@ class EbookParser:
                         logger.debug(f"✅ Found {tag_name}[{idx}]")
                     else: 
                         logger.debug(f"❌ {tag_name}[{idx}] not found - only {len(children)} children available")
-                        # Fallback: Use the last successfully found element
-                        if i == len(segments) - 1:  # This is the final segment
+                        # Conditional fallback: Use the last successfully found element only if enabled
+                        if self.useXpathSegmentFallback and i == len(segments) - 1:  # This is the final segment
                             logger.debug(f"🔄 Fallback: Using previous element as final segment failed")
                             curr = last_valid_element
                         else:
