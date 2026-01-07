@@ -22,6 +22,9 @@ class StorytellerAPIClient:
         self._token_max_age = 30
         self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
+
+    def is_configured(self):
+        return bool(self.base_url and self.user)
     
     def _get_fresh_token(self) -> Optional[str]:
         if self._token and (time.time() - self._token_timestamp) < self._token_max_age:
