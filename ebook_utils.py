@@ -509,6 +509,8 @@ class EbookParser:
                 segments = [s for s in relative_path.split('/') if s and s != 'body']
                 logger.debug(f"🧩 Path segments to traverse: {segments}")
                 
+                last_valid_element = curr  # Keep track of the last successfully found element
+                
                 for i, seg in enumerate(segments):
                     tag_match = re.match(r"([a-z0-9]+)(\[(\d+)\])?", seg, re.IGNORECASE)
                     if not tag_match: 
@@ -523,11 +525,17 @@ class EbookParser:
                     
                     if len(children) >= idx: 
                         curr = children[idx-1]
+                        last_valid_element = curr  # Update last valid element
                         logger.debug(f"✅ Found {tag_name}[{idx}]")
                     else: 
                         logger.debug(f"❌ {tag_name}[{idx}] not found - only {len(children)} children available")
-                        curr = None
-                        break
+                        # Fallback: Use the last successfully found element
+                        if i == len(segments) - 1:  # This is the final segment
+                            logger.debug(f"🔄 Fallback: Using previous element as final segment failed")
+                            curr = last_valid_element
+                        else:
+                            curr = None
+                            break
                 target_element = curr
 
             if not target_element: 
