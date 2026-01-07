@@ -26,7 +26,7 @@ class EbookParser:
         self.hash_method = os.getenv("KOSYNC_HASH_METHOD", "content").lower()
         logger.info(f"Initialized EbookParser. ID Method: {self.hash_method}")
 
-    def _resolve_book_path(self, filename):
+    def resolve_book_path(self, filename):
         """
         Robustly finds a file in the books directory, handling special characters
         like [ ] (brackets) which break standard glob patterns.
@@ -164,7 +164,7 @@ class EbookParser:
     def find_text_location(self, filename, search_phrase):
         try:
             # FIXED: Use the new robust path resolver
-            book_path = self._resolve_book_path(filename)
+            book_path = self.resolve_book_path(filename)
             
             full_text, spine_map = self.extract_text_and_map(book_path)
             
@@ -269,7 +269,7 @@ class EbookParser:
     def get_text_at_percentage(self, filename, percentage):
         try:
             # FIXED: Use the new robust path resolver
-            book_path = self._resolve_book_path(filename)
+            book_path = self.resolve_book_path(filename)
             
             full_text, _ = self.extract_text_and_map(book_path)
             
@@ -291,7 +291,7 @@ class EbookParser:
 
     def get_character_delta(self, filename, percentage_prev, percentage_new):
         try:
-            book_path = self._resolve_book_path(filename)
+            book_path = self.resolve_book_path(filename)
         
             full_text, _ = self.extract_text_and_map(book_path)
             
