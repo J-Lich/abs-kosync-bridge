@@ -277,7 +277,7 @@ class KoSyncClient:
         try:
             r = requests.put(url, headers=headers, json=payload, timeout=10)
             if r.status_code in (200, 201, 204):
-                logger.debug(f"   📡 KoSync Updated: {percentage:.1%}")
+                logger.debug(f"   📡 KoSync Updated: {percentage:.1%} with progress '{progress_val}' for doc {doc_id}")
                 return True
             else:
                 logger.error(f"Failed to update KoSync: {r.status_code} - {r.text}")
