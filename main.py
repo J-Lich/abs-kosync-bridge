@@ -516,7 +516,8 @@ class SyncManager:
                     if txt:
                         match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=abs_pct)
                         if match_pct:
-                            kosync_ok = self.kosync_client.update_progress(ko_id, match_pct, None)
+                            kosync_xpath = rich_locator["xpath"] if rich_locator and rich_locator.get("xpath") else None
+                            kosync_ok = self.kosync_client.update_progress(ko_id, match_pct, kosync_xpath)
                             st_ok = self.storyteller_db.update_progress(epub, match_pct, rich_locator)
                             bl_ok = self.booklore_client.update_progress(epub, match_pct, rich_locator)
                             if kosync_ok: logger.info("✅ KoSync update successful")
