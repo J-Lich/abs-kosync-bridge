@@ -207,7 +207,8 @@ class SyncManager:
                     transcript_path = self.transcriber.process_audio(mapping['abs_id'], audio_files)
                     
                     logger.info("   Priming ebook cache...")
-                    self.ebook_parser.extract_text_and_map(mapping['ebook_filename'])
+                    book_path = self.ebook_parser.resolve_book_path(mapping['ebook_filename'])
+                    self.ebook_parser.extract_text_and_map(book_path)
 
                     mapping['transcript_file'] = str(transcript_path)
                     mapping['status'] = 'active'
