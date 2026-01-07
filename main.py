@@ -42,8 +42,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("/data")
-BOOKS_DIR = Path("/books")
+# Use environment variable for DATA_DIR and BOOKS_DIR, defaulting to /data and /books
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
+BOOKS_DIR = Path(os.environ.get("BOOKS_DIR", "/books"))
 DB_FILE = DATA_DIR / "mapping_db.json"
 STATE_FILE = DATA_DIR / "last_state.json"
 
@@ -188,10 +189,10 @@ class SyncManager:
 
             # Now it's safe to update progress (Hardcover rejects page updates for Want to Read)
             self.hardcover_client.update_progress(
-                ub['id'], 
-                page_num, 
-                edition_id=mapping.get('hardcover_edition_id'), 
-                is_finished=is_finished, 
+                ub['id'],
+                page_num,
+                edition_id=mapping.get('hardcover_edition_id'),
+                is_finished=is_finished,
                 current_percentage=percentage
             )
 
@@ -206,7 +207,7 @@ class SyncManager:
 
     def _abs_to_percentage(self, abs_seconds, transcript_path):
         try:
-            with open(transcript_path, 'r') as f: 
+            with open(transcript_path, 'r') as f:
                 data = json.load(f)
                 dur = data[-1]['end'] if isinstance(data, list) else data.get('duration', 0)
                 return min(max(abs_seconds / dur, 0.0), 1.0) if dur > 0 else None
@@ -292,7 +293,7 @@ class SyncManager:
 
         # 3. Mark as 'processing' immediately so we don't pick it up again
         logger.info(f"[JOB {job_idx}/{total_jobs}] Starting background transcription: {sanitize_log_data(target_mapping.get('abs_title'))}")
-        
+
         # Atomic update to mark processing
         def set_processing(db):
             for m in db.get('mappings', []):
@@ -304,7 +305,7 @@ class SyncManager:
 
         # 4. Launch the heavy work in a separate thread
         self._job_thread = threading.Thread(
-            target=self._run_background_job, 
+            target=self._run_background_job,
             args=(target_mapping, job_idx, total_jobs),
             daemon=True
         )
@@ -335,7 +336,7 @@ class SyncManager:
 
             # Step 3: Parse EPUB
             self.ebook_parser.extract_text_and_map(epub_path)
-            
+
             # --- Atomic Success Update ---
             def success_update(db):
                 for m in db.get('mappings', []):
@@ -344,17 +345,17 @@ class SyncManager:
                         m['status'] = 'active'
                         m['retry_count'] = 0
                 return db
-            
+
             self.db_handler.update(success_update)
 
             self.db = self.db_handler.load()
-            
+
             # Trigger Hardcover Match (using fresh DB data)
             final_db = self.db_handler.load()
             final_mapping = next((m for m in final_db.get('mappings', []) if m['abs_id'] == abs_id), None)
             if final_mapping:
                 self._automatch_hardcover(final_mapping)
-            
+
             logger.info(f"[JOB] Completed: {sanitize_log_data(abs_title)}")
 
         except Exception as e:
@@ -367,7 +368,7 @@ class SyncManager:
                         curr_retries = m.get('retry_count', 0) + 1
                         m['retry_count'] = curr_retries
                         m['last_error'] = str(e)
-                        
+
                         if curr_retries >= max_retries:
                              m['status'] = 'failed_permanent'
                              logger.warning(f"[JOB] {sanitize_log_data(abs_title)}: Max retries exceeded")
@@ -375,7 +376,7 @@ class SyncManager:
                              m['status'] = 'failed_retry_later'
                 return db
             self.db_handler.update(fail_update)
-      
+
             self.db = self.db_handler.load()
 
     def get_text_from_storyteller_fragment(self, ebook_filename, href, fragment_id):
@@ -383,8 +384,8 @@ class SyncManager:
 
     def sync_cycle(self):
         self.db = self.db_handler.load(default={"mappings": []})
-        self.state = self.state_handler.load(default={}) 
-        
+        self.state = self.state_handler.load(default={})
+
         # --- NEW: Bulk Fetch ABS Progress ---
         abs_in_progress = {}
         try:
@@ -396,12 +397,12 @@ class SyncManager:
 
         active_books = [m for m in self.db.get('mappings', []) if m.get('status') == 'active']
         if active_books: logger.debug(f"🔄 Sync cycle starting - {len(active_books)} active book(s)")
-        
-        db_dirty = False 
+
+        db_dirty = False
 
         for mapping in self.db.get('mappings', []):
             if mapping.get('status') != 'active': continue
-            
+
             abs_id = mapping['abs_id']
 
             # --- NEW: Update Web Stats ---
@@ -409,16 +410,16 @@ class SyncManager:
             if abs_item:
                 new_prog = abs_item.get('progress', 0) * 100
                 new_dur = abs_item.get('duration', 0)
-                
+
                 if mapping.get('unified_progress') != new_prog or mapping.get('duration') != new_dur:
                     mapping['unified_progress'] = new_prog
                     mapping['duration'] = new_dur
                     db_dirty = True
-            
-        
+
+
         active_books = [m for m in self.db.get('mappings', []) if m.get('status') == 'active']
         if active_books: logger.debug(f"🔄 Sync cycle starting - {len(active_books)} active book(s)")
-        
+
         for mapping in self.db.get('mappings', []):
             if mapping.get('status') != 'active': continue
             abs_id, ko_id, epub = mapping['abs_id'], mapping['kosync_doc_id'], mapping['ebook_filename']
@@ -429,7 +430,7 @@ class SyncManager:
                 st_pct, st_ts, st_href, st_frag = self.storyteller_db.get_progress_with_fragment(epub)
                 bl_pct, bl_cfi = self.booklore_client.get_progress(epub)
                 abs_ts = self.abs_client.get_progress(abs_id)
-             
+
 
                 # UPDATED: KoSync now returns tuple (pct, xpath)
                 ko_pct, ko_xpath = (0.0, None)
@@ -440,7 +441,7 @@ class SyncManager:
                         logger.debug(f"⚠️ [{title_snip}] KoSync xpath is None - will use fallback text extraction")
 
                 if abs_ts is None: continue # ABS offline
-                
+
                 abs_pct = self._abs_to_percentage(abs_ts, mapping.get('transcript_file'))
                 if abs_ts > 0 and abs_pct is None: continue # Invalid transcript
 
@@ -529,7 +530,7 @@ class SyncManager:
                     if ko_xpath:
                         logger.debug(f"📚 [{title_snip}] Attempting XPath resolution: {ko_xpath}")
                         txt = self.ebook_parser.resolve_xpath(epub, ko_xpath)
-                        if txt: 
+                        if txt:
                             logger.debug(f"   📝 Using XPath text from {ko_xpath}")
                         else:
                             logger.warning(f"⚠️ [{title_snip}] XPath resolution failed for: {ko_xpath}")
@@ -617,7 +618,7 @@ class SyncManager:
                 }
                 self.state_handler.save(self.state)
                 logger.info("💾 State saved to last_state.json")
-                
+
             except Exception as e:
                 logger.error(f"Sync error: {e}")
         if db_dirty: self.db_handler.save(self.db)
