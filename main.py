@@ -85,6 +85,7 @@ class SyncManager:
         self.delta_abs_thresh = float(os.getenv("SYNC_DELTA_ABS_SECONDS", 60))
         self.delta_kosync_thresh = float(os.getenv("SYNC_DELTA_KOSYNC_PERCENT", 1)) / 100.0
         self.abs_progress_offset = float(os.getenv("ABS_PROGRESS_OFFSET_SECONDS", 0))
+        self.kosync_use_percentage_from_server = os.getenv("KOSYNC_USE_PERCENTAGE_FROM_SERVER", "false").lower() == "true"
         self.startup_checks()
         self.cleanup_stale_jobs()
 
@@ -580,6 +581,7 @@ class SyncManager:
                             abs_ok, final_ts = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=ko_pct)
                             if match_pct:
+                                logger.debug(f"📚 [{title_snip}] Matched text at {match_pct:.1%}. Kosync is at {ko_pct:.1%}")
                                 st_ok = self.storyteller_db.update_progress(epub, match_pct, rich_locator)
                                 bl_ok = self.booklore_client.update_progress(epub, match_pct, rich_locator)
                                 if st_ok: logger.info("✅ Storyteller update successful")
@@ -646,7 +648,7 @@ class SyncManager:
                 self.state[abs_id] = {
                     'abs_ts': final_ts,
                     'abs_pct': self._abs_to_percentage(final_ts, mapping.get('transcript_file')) or 0,
-                    'kosync_pct': final_pct,
+                    'kosync_pct': ko_pct if self.kosync_use_percentage_from_server and leader == 'KOSYNC' else final_pct,
                     'storyteller_pct': final_pct,
                     'booklore_pct': final_pct,
                     'last_updated': time.time()

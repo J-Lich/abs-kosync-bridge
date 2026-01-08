@@ -41,6 +41,8 @@ services:
       - KOSYNC_KEY=your_password
       # Hash method: 'content' (recommended) or 'filename'
       - KOSYNC_HASH_METHOD=content
+      # Whether to use percentage progress from KOSync server instead of calculating from text matching when saving the previous state
+      - KOSYNC_USE_PERCENTAGE_FROM_SERVER=false
 
       # ============================================
       # Hardcover Integration (OPTIONAL)
