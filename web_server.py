@@ -524,6 +524,7 @@ def index():
         mapping.setdefault('storyteller_progress', 0)
         mapping.setdefault('booklore_progress', 0)
         mapping.setdefault('abs_progress', 0)
+        mapping.setdefault('hardcover_progress', 0) 
 
         # 2. POPULATE STATS (Try DB first, Fallback to State)
         # Check if we have state data for this book
@@ -539,6 +540,7 @@ def index():
                 mapping['kosync_progress'] = get_pct('kosync_pct')
                 mapping['storyteller_progress'] = get_pct('storyteller_pct')
                 mapping['booklore_progress'] = get_pct('booklore_pct')
+                mapping['hardcover_progress'] = get_pct('hardcover_pct') 
                 mapping['abs_progress'] = state.get('abs_ts', 0)
 
                 # Sanity check: ABS timestamp may be stored in milliseconds in the state file.
@@ -902,7 +904,6 @@ if __name__ == '__main__':
         )
 
     logger.info(f"Book Linker monitoring interval: {MONITOR_INTERVAL} seconds")
-    monitor_thread = threading.Thread(target=monitor_readaloud_files, daemon=True)
-    monitor_thread.start()
+
     app.run(host='0.0.0.0', port=5757, debug=False)
 # [END FILE]

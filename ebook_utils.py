@@ -47,6 +47,26 @@ class LRUCache:
 
 
 class EbookParser:
+
+    def get_text_at_percentage(self, filename, percentage):
+        """Get text snippet at a given percentage through the book."""
+        try:
+            book_path = self._resolve_book_path(filename)
+            full_text, spine_map = self.extract_text_and_map(book_path)
+            
+            if not full_text:
+                return None
+            
+            target_pos = int(len(full_text) * percentage)
+            # Grab a window of text around the calculated character position
+            start = max(0, target_pos - 400)
+            end = min(len(full_text), target_pos + 400)
+            
+            return full_text[start:end]
+        except Exception as e:
+            logger.error(f"Error getting text at percentage: {e}")
+            return None
+        
     def __init__(self, books_dir, epub_cache_dir=None):
         self.books_dir = Path(books_dir)
         self.epub_cache_dir = Path(epub_cache_dir) if epub_cache_dir else Path("/data/epub_cache")
@@ -466,21 +486,19 @@ class EbookParser:
     def _generate_hybrid_xpath_lxml(self, node):
         """
         Internal LXML helper: STRICT POSITIONAL ONLY.
-        Removes ID anchoring to prevent KOReader silent rejection.
+        1. Removes ID anchoring (KOReader hates it).
+        2. Removes 'html' root tag (KOReader expects path to start at body).
         """
         path = []
         current = node
         while current is not None:
-            # REMOVED: if 'id' in current.attrib check.
-            # KOReader requires strict tag counting (e.g. /body/div/p[1])
-            
             parent = current.getparent()
             if parent is None:
                 path.insert(0, current.tag)
                 break
                 
             siblings = list(parent)
-            # Count matching tags before this one to get the index [N]
+            # Count matching tags before this one
             matching_siblings = [s for s in siblings if s.tag == current.tag]
             
             if len(matching_siblings) > 1:
@@ -490,6 +508,12 @@ class EbookParser:
                 path.insert(0, current.tag)
             
             current = parent
+
+        # FIX: KOReader expects paths like /body/DocFragment[X]/body/...
+        # lxml generates /html/body/..., so we must remove the leading 'html'.
+        if path and path[0] == 'html':
+            path.pop(0)
+
         return "/".join(path)
 
     def resolve_xpath(self, filename, xpath_str):
@@ -498,8 +522,7 @@ class EbookParser:
         Uses LXML to handle KOReader's /text().123 format accurately.
         """
         try:
-            logger.debug(f"🔍 Resolving XPath (Hybrid): {xpath_str}")
-            
+            # 1. Parse spine index
             match = re.search(r'DocFragment\[(\d+)\]', xpath_str)
             if not match: return None
             spine_index = int(match.group(1))
@@ -510,8 +533,13 @@ class EbookParser:
             target_item = next((i for i in spine_map if i['spine_index'] == spine_index), None)
             if not target_item: return None
 
-            # Clean path and extract offset
+            # 2. Extract relative path and CLEAN it
+            # Remove the DocFragment prefix
             relative_path = xpath_str.split(f"DocFragment[{spine_index}]")[-1]
+            
+            # FIX: Strip leading slash to make path relative for lxml
+            # (e.g. "/body/p[1]" becomes "body/p[1]", which works inside <html> root)
+            relative_path = relative_path.lstrip('/')
             
             # Check for offset suffix
             offset_match = re.search(r'/text\(\)\.(\d+)$', relative_path)
@@ -524,9 +552,8 @@ class EbookParser:
             # Attempt 1: Direct Lookup
             elements = tree.xpath(clean_xpath)
             
-            # Attempt 2: Fallback (ID check)
+            # Attempt 2: Fallback (ID check) - kept just in case
             if not elements and '/' in clean_xpath:
-                logger.debug("⚠️ Direct XPath failed, trying fallback ID search")
                 id_match = re.search(r"@id='([^']+)'", clean_xpath)
                 if id_match:
                     elements = tree.xpath(f"//*[@id='{id_match.group(1)}']")
@@ -538,7 +565,6 @@ class EbookParser:
             target_node = elements[0]
             
             # Calculate local text offset
-            # We must count text of all preceding nodes in this chapter to get the 'local_pos'
             preceding_len = 0
             for node in tree.iter():
                 if node == target_node: break
@@ -550,7 +576,6 @@ class EbookParser:
             # Global offset
             global_offset = target_item['start'] + local_pos
             
-            # Return text snippet
             start = max(0, global_offset)
             end = min(len(full_text), global_offset + 500)
             return full_text[start:end]

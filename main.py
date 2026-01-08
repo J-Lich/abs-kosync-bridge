@@ -691,6 +691,7 @@ class SyncManager:
                     'kosync_pct': ko_pct if self.kosync_use_percentage_from_server and leader == 'KOSYNC' else final_pct,
                     'storyteller_pct': final_pct,
                     'booklore_pct': final_pct,
+                    'hardcover_pct': final_pct,
                     'last_updated': time.time()
                 }
                 self.state_handler.save(self.state)
