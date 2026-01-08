@@ -455,7 +455,7 @@ class EbookParser:
 
             # KOReader format: /body/DocFragment[X]/.../text().Y
             doc_frag = f"/body/DocFragment[{target_item['spine_index']}]"
-            final_xpath = f"{doc_frag}{raw_xpath}/text().{target_offset}"
+            final_xpath = f"{doc_frag}/{raw_xpath}/text().{target_offset}"
             
             return final_xpath, percentage
 
@@ -464,13 +464,15 @@ class EbookParser:
             return None, 0.0
 
     def _generate_hybrid_xpath_lxml(self, node):
-        """Internal LXML helper for Hybrid XPaths (ID preference + positional fallback)."""
+        """
+        Internal LXML helper: STRICT POSITIONAL ONLY.
+        Removes ID anchoring to prevent KOReader silent rejection.
+        """
         path = []
         current = node
         while current is not None:
-            if 'id' in current.attrib:
-                path.insert(0, f"//*[@id='{current.attrib['id']}']")
-                break
+            # REMOVED: if 'id' in current.attrib check.
+            # KOReader requires strict tag counting (e.g. /body/div/p[1])
             
             parent = current.getparent()
             if parent is None:
@@ -478,6 +480,7 @@ class EbookParser:
                 break
                 
             siblings = list(parent)
+            # Count matching tags before this one to get the index [N]
             matching_siblings = [s for s in siblings if s.tag == current.tag]
             
             if len(matching_siblings) > 1:
