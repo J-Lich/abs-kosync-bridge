@@ -543,16 +543,31 @@ class SyncManager:
                 final_ts, final_pct = abs_ts, vals[leader]
                 sync_success = False
 
-                # --- LEADER LOGIC (unchanged behaviour, but with post-call success logs) ---
+                # --- LEADER LOGIC ---
                 if leader == 'ABS':
                     txt = self.transcriber.get_text_at_time(mapping.get('transcript_file'), abs_ts)
                     if txt:
                         match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=abs_pct)
                         if match_pct:
-                            kosync_xpath = rich_locator["xpath"] if rich_locator and rich_locator.get("xpath") else None
+                            # --- NEW: Hybrid Logic ---
+                            # 1. Generate "Perfect" LXML XPath if possible
+                            perfect_xpath = None
+                            if rich_locator and 'match_index' in rich_locator:
+                                perfect_xpath, _ = self.ebook_parser.get_xpath_and_percentage(epub, rich_locator['match_index'])
+
+                            # 2. Priority Chain: Perfect > Rich > Empty
+                            if perfect_xpath:
+                                kosync_xpath = perfect_xpath
+                            elif rich_locator and rich_locator.get("xpath"):
+                                kosync_xpath = rich_locator["xpath"]
+                            else:
+                                kosync_xpath = "" 
+
+                            # 3. Update Clients
                             kosync_ok = self.kosync_client.update_progress(ko_id, match_pct, kosync_xpath)
                             st_ok = self.storyteller_db.update_progress(epub, match_pct, rich_locator)
                             bl_ok = self.booklore_client.update_progress(epub, match_pct, rich_locator)
+                            
                             if kosync_ok: logger.info("✅ KoSync update successful")
                             if st_ok: logger.info("✅ Storyteller update successful")
                             if bl_ok: logger.info("✅ Booklore update successful")
@@ -604,15 +619,28 @@ class SyncManager:
                         if ts:
                             abs_ok, final_ts = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=st_pct)
-                            kosync_xpath = rich_locator["xpath"] if rich_locator and rich_locator.get("xpath") else None
+                            
+                            # --- NEW: Hybrid Logic ---
                             if match_pct:
+                                perfect_xpath = None
+                                if rich_locator and 'match_index' in rich_locator:
+                                    perfect_xpath, _ = self.ebook_parser.get_xpath_and_percentage(epub, rich_locator['match_index'])
+
+                                if perfect_xpath:
+                                    kosync_xpath = perfect_xpath
+                                elif rich_locator and rich_locator.get("xpath"):
+                                    kosync_xpath = rich_locator["xpath"]
+                                else:
+                                    kosync_xpath = ""
+
                                 ko_ok = self.kosync_client.update_progress(ko_id, match_pct, kosync_xpath)
                                 bl_ok = self.booklore_client.update_progress(epub, match_pct, rich_locator)
                                 if ko_ok: logger.info("✅ KoSync update successful")
                                 if bl_ok: logger.info("✅ Booklore update successful")
                                 final_pct = match_pct
                             else:
-                                ko_ok = self.kosync_client.update_progress(ko_id, st_pct, kosync_xpath)
+                                # Fallback: No text match, send rough pct + empty xpath
+                                ko_ok = self.kosync_client.update_progress(ko_id, st_pct, "")
                                 bl_ok = self.booklore_client.update_progress(epub, st_pct, None)
                                 if ko_ok: logger.info("✅ KoSync update successful")
                                 if bl_ok: logger.info("✅ Booklore update successful")
@@ -626,15 +654,27 @@ class SyncManager:
                         if ts:
                             abs_ok, final_ts = self._update_abs_progress_with_offset(abs_id, ts)
                             match_pct, rich_locator = self.ebook_parser.find_text_location(epub, txt, hint_percentage=bl_pct)
-                            kosync_xpath = rich_locator["xpath"] if rich_locator and rich_locator.get("xpath") else None
+                            
+                            # --- NEW: Hybrid Logic ---
                             if match_pct:
+                                perfect_xpath = None
+                                if rich_locator and 'match_index' in rich_locator:
+                                    perfect_xpath, _ = self.ebook_parser.get_xpath_and_percentage(epub, rich_locator['match_index'])
+                                
+                                if perfect_xpath:
+                                    kosync_xpath = perfect_xpath
+                                elif rich_locator and rich_locator.get("xpath"):
+                                    kosync_xpath = rich_locator["xpath"]
+                                else:
+                                    kosync_xpath = ""
+
                                 ko_ok = self.kosync_client.update_progress(ko_id, match_pct, kosync_xpath)
                                 st_ok = self.storyteller_db.update_progress(epub, match_pct, rich_locator)
                                 if ko_ok: logger.info("✅ KoSync update successful")
                                 if st_ok: logger.info("✅ Storyteller update successful")
                                 final_pct = match_pct
                             else:
-                                ko_ok = self.kosync_client.update_progress(ko_id, bl_pct, kosync_xpath)
+                                ko_ok = self.kosync_client.update_progress(ko_id, bl_pct, "")
                                 st_ok = self.storyteller_db.update_progress(epub, bl_pct, None)
                                 if ko_ok: logger.info("✅ KoSync update successful")
                                 if st_ok: logger.info("✅ Storyteller update successful")

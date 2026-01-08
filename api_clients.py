@@ -264,7 +264,7 @@ class KoSyncClient:
         url = f"{self.base_url}/syncs/progress"
 
         # Use XPath if provided, otherwise format percentage
-        progress_val = xpath if xpath else f"{percentage:.2%}"
+        progress_val = xpath if xpath else ""
 
         payload = {
             "document": doc_id,
