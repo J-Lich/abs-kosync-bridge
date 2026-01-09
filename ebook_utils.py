@@ -47,26 +47,6 @@ class LRUCache:
 
 
 class EbookParser:
-
-    def get_text_at_percentage(self, filename, percentage):
-        """Get text snippet at a given percentage through the book."""
-        try:
-            book_path = self._resolve_book_path(filename)
-            full_text, spine_map = self.extract_text_and_map(book_path)
-            
-            if not full_text:
-                return None
-            
-            target_pos = int(len(full_text) * percentage)
-            # Grab a window of text around the calculated character position
-            start = max(0, target_pos - 400)
-            end = min(len(full_text), target_pos + 400)
-            
-            return full_text[start:end]
-        except Exception as e:
-            logger.error(f"Error getting text at percentage: {e}")
-            return None
-        
     def __init__(self, books_dir, epub_cache_dir=None):
         self.books_dir = Path(books_dir)
         self.epub_cache_dir = Path(epub_cache_dir) if epub_cache_dir else Path("/data/epub_cache")
@@ -179,6 +159,25 @@ class EbookParser:
         except Exception as e:
             logger.error(f"Failed to parse EPUB {filepath}: {e}")
             return "", []
+
+    def get_text_at_percentage(self, filename, percentage):
+        """Get text snippet at a given percentage through the book."""
+        try:
+            book_path = self._resolve_book_path(filename)
+            full_text, spine_map = self.extract_text_and_map(book_path)
+            
+            if not full_text:
+                return None
+            
+            target_pos = int(len(full_text) * percentage)
+            # Grab a window of text around the calculated character position
+            start = max(0, target_pos - 400)
+            end = min(len(full_text), target_pos + 400)
+            
+            return full_text[start:end]
+        except Exception as e:
+            logger.error(f"Error getting text at percentage: {e}")
+            return None
 
     # =========================================================================
     # [ENGINE A] STORYTELLER / READIUM / GENERAL UTILS
@@ -410,77 +409,84 @@ class EbookParser:
     # =========================================================================
 
     def get_xpath_and_percentage(self, filename, position=0):
-    try:
-        book_path = self._resolve_book_path(filename)
-        full_text, spine_map = self.extract_text_and_map(book_path)
-        total_length = len(full_text)
-        
-        if total_length == 0:
-            return None, 0.0
+        """
+        NEW: For KOReader Sync.
+        Uses LXML for precision handling of /text().OFFSET
+        """
+        try:
+            # 1. Get Text & Map
+            book_path = self._resolve_book_path(filename)
+            full_text, spine_map = self.extract_text_and_map(book_path)
+            total_length = len(full_text)
+            
+            if total_length == 0:
+                return None, 0.0
 
-        current_pos = min(max(0, position), total_length)
-        percentage = current_pos / total_length
+            current_pos = min(max(0, position), total_length)
+            percentage = current_pos / total_length
 
-        # Find which spine item this falls into
-        target_item = None
-        local_pos = 0
-        
-        for item in spine_map:
-            if item['start'] <= current_pos < item['end']:
-                target_item = item
-                local_pos = current_pos - item['start']
-                break
-        
-        if not target_item:
-            if spine_map: 
-                target_item = spine_map[-1]
-                local_pos = len(target_item['content'])
-            else:
-                return None, 1.0
-
-        # Use LXML to generate the hybrid XPath
-        tree = html.fromstring(target_item['content'])
-        
-        # Find the specific node at 'local_pos'
-        current_count = 0
-        target_node = None
-        target_offset = 0
-
-        for node in tree.iter():
-            if node.text:
-                node_len = len(node.text)
-                if current_count + node_len >= local_pos:
-                    target_node = node
-                    target_offset = local_pos - current_count
+            # Find which spine item this falls into
+            target_item = None
+            local_pos = 0
+            
+            for item in spine_map:
+                if item['start'] <= current_pos < item['end']:
+                    target_item = item
+                    local_pos = current_pos - item['start']
                     break
-                current_count += node_len
-            if node.tail:
-                tail_len = len(node.tail)
-                if current_count + tail_len >= local_pos:
-                    target_node = node  # ✅ FIXED: Was node.getparent()
-                    target_offset = local_pos - current_count
-                    break
-                current_count += tail_len
+            
+            if not target_item:
+                if spine_map: 
+                    target_item = spine_map[-1]
+                    local_pos = len(target_item['content'])
+                else:
+                    return None, 1.0
 
-        if target_node is None:
-            raw_xpath = "/body/html"
+            # 2. Use LXML to generate the hybrid XPath
+            tree = html.fromstring(target_item['content'])
+            
+            # Find the specific node at 'local_pos'
+            current_count = 0
+            target_node = None
             target_offset = 0
-        else:
-            raw_xpath = self._generate_hybrid_xpath_lxml(target_node)
 
-        # ✅ FIXED: Ensure proper path joining
-        if not raw_xpath.startswith('/'):
-            raw_xpath = '/' + raw_xpath
+            for node in tree.iter():
+                if node.text:
+                    node_len = len(node.text)
+                    if current_count + node_len >= local_pos:
+                        target_node = node
+                        target_offset = local_pos - current_count
+                        break
+                    current_count += node_len
+                if node.tail:
+                    tail_len = len(node.tail)
+                    if current_count + tail_len >= local_pos:
+                        target_node = node
+                        target_offset = local_pos - current_count
+                        break
+                    current_count += tail_len
 
-        # KOReader format: /body/DocFragment[X]/.../text().Y
-        doc_frag = f"/body/DocFragment[{target_item['spine_index']}]"
-        final_xpath = f"{doc_frag}{raw_xpath}/text().{target_offset}"
-        
-        return final_xpath, percentage
+            if target_node is None:
+                # Default to root
+                raw_xpath = "/body/html"
+                target_offset = 0
+            else:
+                raw_xpath = self._generate_hybrid_xpath_lxml(target_node)
 
-    except Exception as e:
-        logger.error(f"Error in get_xpath_and_percentage: {e}")
-        return None, 0.0
+            # Ensure proper path joining
+            if not raw_xpath.startswith('/'):
+                raw_xpath = '/' + raw_xpath
+
+            # KOReader format: /body/DocFragment[X]/.../text().Y
+            doc_frag = f"/body/DocFragment[{target_item['spine_index']}]"
+            
+            final_xpath = f"{doc_frag}{raw_xpath}/text().{target_offset}"
+            
+            return final_xpath, percentage
+
+        except Exception as e:
+            logger.error(f"Error in get_xpath_and_percentage: {e}")
+            return None, 0.0
 
     def _generate_hybrid_xpath_lxml(self, node):
         """
@@ -497,7 +503,6 @@ class EbookParser:
                 break
                 
             siblings = list(parent)
-            # Count matching tags before this one
             matching_siblings = [s for s in siblings if s.tag == current.tag]
             
             if len(matching_siblings) > 1:
@@ -516,109 +521,109 @@ class EbookParser:
         return "/".join(path)
 
     def resolve_xpath(self, filename, xpath_str):
-    """
-    HYBRID RESOLVER:
-    Uses LXML to handle KOReader's /text().123 format accurately.
-    """
-    try:
-        logger.debug(f"🔍 Resolving XPath (Hybrid): {xpath_str}")
-        
-        # Extract DocFragment index
-        match = re.search(r'DocFragment\[(\d+)\]', xpath_str)
-        if not match:
-            return None
-        spine_index = int(match.group(1))
-
-        book_path = self._resolve_book_path(filename)
-        full_text, spine_map = self.extract_text_and_map(book_path)
-        
-        target_item = next((i for i in spine_map if i['spine_index'] == spine_index), None)
-        if not target_item:
-            return None
-
-        # Clean path and extract offset
-        relative_path = xpath_str.split(f"DocFragment[{spine_index}]")[-1]
-        
-        # Check for offset suffix
-        offset_match = re.search(r'/text\(\)\.(\d+)$', relative_path)
-        target_offset = int(offset_match.group(1)) if offset_match else 0
-        clean_xpath = re.sub(r'/text\(\)\.(\d+)$', '', relative_path)
-        
-        # ✅ FIX: Handle leading slash and make xpath work with lxml
-        if clean_xpath.startswith('/'):
-            clean_xpath = '.' + clean_xpath  # Make relative
-        
-        # LXML Parsing
-        tree = html.fromstring(target_item['content'])
-        
-        # Attempt 1: Direct Lookup
+        """
+        HYBRID RESOLVER:
+        Uses LXML to handle KOReader's /text().123 format accurately.
+        """
         try:
-            elements = tree.xpath(clean_xpath)
-        except Exception as e:
-            logger.debug(f"XPath query failed: {e}")
+            logger.debug(f"🔍 Resolving XPath (Hybrid): {xpath_str}")
+            
+            # Extract DocFragment index
+            match = re.search(r'DocFragment\[(\d+)\]', xpath_str)
+            if not match:
+                return None
+            spine_index = int(match.group(1))
+
+            book_path = self._resolve_book_path(filename)
+            full_text, spine_map = self.extract_text_and_map(book_path)
+            
+            target_item = next((i for i in spine_map if i['spine_index'] == spine_index), None)
+            if not target_item:
+                return None
+
+            # Clean path and extract offset
+            relative_path = xpath_str.split(f"DocFragment[{spine_index}]")[-1]
+            
+            # Check for offset suffix
+            offset_match = re.search(r'/text\(\)\.(\d+)$', relative_path)
+            target_offset = int(offset_match.group(1)) if offset_match else 0
+            clean_xpath = re.sub(r'/text\(\)\.(\d+)$', '', relative_path)
+            
+            # FIX: Handle leading slash and make xpath work with lxml
+            if clean_xpath.startswith('/'):
+                clean_xpath = '.' + clean_xpath  # Make relative to root
+            
+            # LXML Parsing
+            tree = html.fromstring(target_item['content'])
+            
+            # Attempt 1: Direct Lookup
             elements = []
-        
-        # Attempt 2: Fallback - try without leading ./
-        if not elements and clean_xpath.startswith('./'):
             try:
-                elements = tree.xpath(clean_xpath[2:])
-            except:
-                pass
-        
-        # Attempt 3: Fallback (ID check)
-        if not elements:
-            logger.debug("⚠️ Direct XPath failed, trying fallback ID search")
-            id_match = re.search(r"@id='([^']+)'", clean_xpath)
-            if id_match:
+                elements = tree.xpath(clean_xpath)
+            except Exception as e:
+                logger.debug(f"XPath query failed: {e}")
+            
+            # Attempt 2: Fallback - try without leading ./
+            if not elements and clean_xpath.startswith('./'):
                 try:
-                    elements = tree.xpath(f"//*[@id='{id_match.group(1)}']")
+                    elements = tree.xpath(clean_xpath[2:])
                 except:
                     pass
-        
-        # Attempt 4: Just find by tag path (strip indices)
-        if not elements:
-            simple_path = re.sub(r'\[\d+\]', '', clean_xpath)
-            try:
-                elements = tree.xpath(simple_path)
-            except:
-                pass
-        
-        if not elements:
-            logger.warning(f"❌ Could not resolve XPath in {filename}: {clean_xpath}")
-            return None
-        
-        target_node = elements[0]
-        
-        # ✅ FIX: Calculate position by counting all text up to and including target node
-        preceding_len = 0
-        found_target = False
-        
-        for node in tree.iter():
-            if node == target_node:
-                found_target = True
-                # Add the offset within this node
-                # Note: offset could be in .text, we add it directly
-                preceding_len += target_offset
-                break
-            if node.text:
-                preceding_len += len(node.text)
-            if node.tail:
-                preceding_len += len(node.tail)
-        
-        if not found_target:
-            logger.warning(f"❌ Target node not found in iteration")
-            return None
-        
-        local_pos = preceding_len
-        
-        # Global offset
-        global_offset = target_item['start'] + local_pos
-        
-        # Return text snippet
-        start = max(0, global_offset)
-        end = min(len(full_text), global_offset + 500)
-        return full_text[start:end]
+            
+            # Attempt 3: Fallback (ID check)
+            if not elements:
+                logger.debug("⚠️ Direct XPath failed, trying fallback ID search")
+                id_match = re.search(r"@id='([^']+)'", clean_xpath)
+                if id_match:
+                    try:
+                        elements = tree.xpath(f"//*[@id='{id_match.group(1)}']")
+                    except:
+                        pass
+            
+            # Attempt 4: Just find by tag path (strip indices)
+            if not elements:
+                simple_path = re.sub(r'\[\d+\]', '', clean_xpath)
+                try:
+                    elements = tree.xpath(simple_path)
+                except:
+                    pass
+            
+            if not elements:
+                logger.warning(f"❌ Could not resolve XPath in {filename}: {clean_xpath}")
+                return None
+            
+            target_node = elements[0]
+            
+            # Calculate position by counting all text up to and including target node
+            preceding_len = 0
+            found_target = False
+            
+            for node in tree.iter():
+                if node == target_node:
+                    found_target = True
+                    # Add the offset within this node
+                    preceding_len += target_offset
+                    break
+                if node.text:
+                    preceding_len += len(node.text)
+                if node.tail:
+                    preceding_len += len(node.tail)
+            
+            if not found_target:
+                logger.warning(f"❌ Target node not found in iteration")
+                return None
+            
+            local_pos = preceding_len
+            
+            # Global offset
+            global_offset = target_item['start'] + local_pos
+            
+            # Return text snippet
+            start = max(0, global_offset)
+            end = min(len(full_text), global_offset + 500)
+            return full_text[start:end]
 
-    except Exception as e:
-        logger.error(f"Error resolving XPath {xpath_str}: {e}")
-        return None
+        except Exception as e:
+            logger.error(f"Error resolving XPath {xpath_str}: {e}")
+            return None
+# [END FILE]
