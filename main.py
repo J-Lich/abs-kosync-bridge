@@ -563,7 +563,8 @@ class SyncManager:
                             elif rich_locator and rich_locator.get("xpath"):
                                 kosync_xpath = rich_locator["xpath"]
                             else:
-                                kosync_xpath = "" 
+                                logger.warning(f"⚠️ [{title_snip}] No valid XPath could be determined from ABS text match, not updating progress.")
+                                continue
 
                             # 3. Update Clients
                             kosync_ok = self.kosync_client.update_progress(ko_id, match_pct, kosync_xpath)

@@ -103,6 +103,10 @@ class TelegramHandler(logging.Handler):
         self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
     def emit(self, record):
+        # Prevent infinite loops - don't log failures from this handler itself
+        if record.name == __name__ and 'TelegramHandler' in record.getMessage():
+            return
+            
         try:
             message = self.format(record)
             payload = {
@@ -111,9 +115,11 @@ class TelegramHandler(logging.Handler):
                 'parse_mode': 'HTML',
                 'disable_notification': False
             }
-            requests.post(self.api_url, data=payload, timeout=5)
-        except Exception:
-            pass  # Never raise from logging
+            response = requests.post(self.api_url, data=payload, timeout=5)
+            response.raise_for_status()  # Raise exception for HTTP errors
+        except Exception as e:
+            # Log telegram handler failures without causing loops
+            logger.error(f"TelegramHandler failed to send message: {str(e)}")  # Never raise from logging
 
 
 def setup_telegram_logging():
