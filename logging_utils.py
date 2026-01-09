@@ -47,7 +47,7 @@ def setup_file_logging():
 
     file_handler = RotatingFileHandler(str(LOG_PATH), maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
     file_handler.setLevel(log_level)
-    file_handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
+    file_handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s - %(name)s: %(message)s'))
     
     # Attach to the root logger so all module loggers go to the same file
     root_logger = logging.getLogger()

@@ -951,7 +951,7 @@ def api_logs():
             if not line:
                 continue
                 
-            # Parse log line format: [2024-01-09 10:30:45] LEVEL: MESSAGE
+            # Parse log line format: [2024-01-09 10:30:45] LEVEL - MODULE: MESSAGE
             try:
                 if line.startswith('[') and '] ' in line:
                     timestamp_end = line.find('] ')
@@ -959,16 +959,26 @@ def api_logs():
                     rest = line[timestamp_end + 2:]
                     
                     if ': ' in rest:
-                        level_str, message = rest.split(': ', 1)
+                        level_module_str, message = rest.split(': ', 1)
+                        
+                        # Check if format includes module (LEVEL - MODULE)
+                        if ' - ' in level_module_str:
+                            level_str, module_str = level_module_str.split(' - ', 1)
+                        else:
+                            # Old format without module
+                            level_str = level_module_str
+                            module_str = 'unknown'
+                            
                         level_num = log_levels.get(level_str.upper(), 20)
                         
                         # Apply filters
                         if level_num >= min_level_num:
-                            if not search_term or search_term in message.lower() or search_term in level_str.lower():
+                            if not search_term or search_term in message.lower() or search_term in level_str.lower() or search_term in module_str.lower():
                                 parsed_logs.append({
                                     'timestamp': timestamp_str,
                                     'level': level_str,
                                     'message': message,
+                                    'module': module_str,
                                     'raw': line
                                 })
                     else:
@@ -979,6 +989,7 @@ def api_logs():
                                     'timestamp': timestamp_str,
                                     'level': 'INFO',
                                     'message': rest,
+                                    'module': 'unknown',
                                     'raw': line
                                 })
                 else:
@@ -989,6 +1000,7 @@ def api_logs():
                                 'timestamp': '',
                                 'level': 'INFO',
                                 'message': line,
+                                'module': 'unknown',
                                 'raw': line
                             })
             except Exception:
@@ -998,6 +1010,7 @@ def api_logs():
                         'timestamp': '',
                         'level': 'INFO',
                         'message': line,
+                        'module': 'unknown',
                         'raw': line
                     })
         
