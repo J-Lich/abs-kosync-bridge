@@ -827,9 +827,19 @@ def clear_progress(abs_id):
         # Reset progress to 0 in all three systems
         logger.info(f"Clearing progress for {sanitize_log_data(mapping.get('abs_title', abs_id))}")
 
-        # ABS: Set to 0 seconds
-        manager.abs_client.update_progress(abs_id, 0)
-        logger.info(f"  ✓ ABS progress cleared")
+        # ABS: Set to 0 seconds using session-based endpoint
+        abs_session_id = mapping.get('abs_session_id')
+        if not abs_session_id:
+            # Create a new session if one doesn't exist
+            abs_session_id = manager.abs_client.create_session(abs_id)
+            mapping['abs_session_id'] = abs_session_id
+            db_handler.save(db)
+        
+        if abs_session_id:
+            manager.abs_client.update_progress(abs_session_id, 0)
+            logger.info(f"  ✓ ABS progress cleared")
+        else:
+            logger.warning(f"  ⚠️ Could not clear ABS progress - no valid session")
 
         # KOSync: Set to 0%
         kosync_id = mapping.get('kosync_doc_id')
